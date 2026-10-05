@@ -12,6 +12,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.edro08.structa.R
 
 /** Keyboard and touch share selection; Escape dismisses without changing the document. */
 @Composable
@@ -34,11 +36,11 @@ fun ProductivityPicker(title: String, query: String, onQuery: (String) -> Unit,
                     else -> false
                 }
             }) {
-                TextField(query, onQuery, label = { Text("Filtrar") }, singleLine = true,
+                 TextField(query, onQuery, label = { Text(stringResource(R.string.editor_filter)) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth().focusRequester(focus))
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                if (labels.isEmpty() && !loading) Text("Sin resultados")
+                 if (labels.isEmpty() && !loading) Text(stringResource(R.string.editor_no_results))
                 LazyColumn(Modifier.heightIn(max = 320.dp), state = scroll) {
                     itemsIndexed(labels) { index, (label, detail) ->
                         Surface(color = if (index == selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
@@ -50,5 +52,5 @@ fun ProductivityPicker(title: String, query: String, onQuery: (String) -> Unit,
                     }
                 }
             }
-        }, confirmButton = {}, dismissButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } })
+         }, confirmButton = {}, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) } })
 }

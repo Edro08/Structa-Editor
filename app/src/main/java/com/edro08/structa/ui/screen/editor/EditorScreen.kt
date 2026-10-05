@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -17,6 +16,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import com.edro08.structa.R
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileMode
 import com.edro08.structa.ui.editor.component.StructaEditor
@@ -24,13 +26,32 @@ import com.edro08.structa.ui.editor.input.EditorAction
 import com.edro08.structa.ui.editor.input.applicationActionFor
 import com.edro08.structa.domain.editor.search.SearchOptions
 import com.edro08.structa.ui.component.formatBytes
+import com.edro08.structa.ui.component.EmptyScreen
+import com.edro08.structa.ui.component.StructaTopBar
+import com.edro08.structa.ui.theme.StructaSpacing
 
-private val FileMode.displayName: String
-    get() = when (this) {
-        FileMode.TEXT -> "Texto"
-        FileMode.JSON -> "JSON"
-        FileMode.YAML -> "YAML"
-    }
+@Composable
+private fun modeName(mode: FileMode): String = stringResource(when (mode) {
+    FileMode.TEXT -> R.string.editor_text_mode
+    FileMode.JSON -> R.string.editor_json_mode
+    FileMode.YAML -> R.string.editor_yaml_mode
+})
+
+@Composable
+private fun actionName(action: EditorAction): String = stringResource(when (action) {
+    EditorAction.SAVE -> R.string.editor_save
+    EditorAction.FIND -> R.string.editor_find
+    EditorAction.REPLACE -> R.string.editor_replace
+    EditorAction.GO_TO_LINE -> R.string.editor_go_to_line
+    EditorAction.QUICK_OPEN -> R.string.editor_open
+    EditorAction.COMMAND_PALETTE -> R.string.editor_edit_menu
+    EditorAction.FIND_NEXT -> R.string.editor_next
+    EditorAction.FIND_PREVIOUS -> R.string.editor_previous
+    EditorAction.UNDO -> R.string.editor_undo
+    EditorAction.REDO -> R.string.editor_redo
+    EditorAction.FORMAT -> R.string.editor_format_document
+    EditorAction.CLOSE -> R.string.editor_close
+})
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,53 +107,60 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
     Scaffold(modifier = Modifier.onPreviewKeyEvent { event ->
         applicationActionFor(event.nativeKeyEvent)?.let { dispatch(it); true } ?: false
     }, topBar = {
-        TopAppBar(title = {
+        StructaTopBar(title = {
             Column {
-                Text((entry?.name ?: "Editor") + if (state.tabs.size == 1 && state.dirty) " ●" else "", maxLines = 1)
+                 val title = entry?.name ?: stringResource(R.string.editor_title)
+                 Text(if (state.tabs.size == 1 && state.dirty) stringResource(R.string.editor_dirty_title, title) else title, maxLines = 1)
                 if (entry != null) {
-                    val language = remember(entry.name) {
-                        com.edro08.structa.domain.editor.syntax.LanguageRegistry.forFileName(entry.name)
-                    }
-                    val limit = if (state.value.text.length > com.edro08.structa.domain.editor.syntax.IncrementalHighlighter.MAX_TEXT_LENGTH)
-                        " · resaltado desactivado por tamaño" else ""
-                    Text("${language.title} · ${formatBytes(entry.sizeBytes)}$limit", maxLines = 1,
+                     val language = remember(entry.name) {
+                         com.edro08.structa.domain.editor.syntax.LanguageRegistry.forFileName(entry.name)
+                     }
+                     val languageName = stringResource(when (language.id) {
+                         "kotlin" -> R.string.editor_language_kotlin
+                         "java" -> R.string.editor_language_java
+                         "go" -> R.string.editor_language_go
+                         "json" -> R.string.editor_language_json
+                         "yaml" -> R.string.editor_language_yaml
+                         "markdown" -> R.string.editor_language_markdown
+                         else -> R.string.editor_language_plain
+                     })
+                     val info = if (state.value.text.length > com.edro08.structa.domain.editor.syntax.IncrementalHighlighter.MAX_TEXT_LENGTH)
+                         R.string.editor_document_info_syntax_limited else R.string.editor_document_info
+                     Text(stringResource(info, languageName, formatBytes(entry.sizeBytes)), maxLines = 1,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-        },
-            navigationIcon = { IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás")
-            } },
+        }, onBack = onBack,
             actions = {
                 Box {
                     OutlinedButton(onClick = { showEditMenu = false; showFileMenu = true },
-                        shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Archivo") }
+                         shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text(stringResource(R.string.editor_file_menu)) }
                     DropdownMenu(expanded = showFileMenu, onDismissRequest = { showFileMenu = false }) {
-                        DropdownMenuItem(text = { Text("Abrir") }, onClick = { showFileMenu = false; dispatch(EditorAction.QUICK_OPEN) })
-                        DropdownMenuItem(text = { Text("Guardar") }, enabled = enabled(EditorAction.SAVE),
+                         DropdownMenuItem(text = { Text(stringResource(R.string.editor_open)) }, onClick = { showFileMenu = false; dispatch(EditorAction.QUICK_OPEN) })
+                         DropdownMenuItem(text = { Text(stringResource(R.string.editor_save)) }, enabled = enabled(EditorAction.SAVE),
                             onClick = { showFileMenu = false; dispatch(EditorAction.SAVE) })
-                        DropdownMenuItem(text = { Text("Guardar Como...") }, enabled = enabled(EditorAction.SAVE),
+                         DropdownMenuItem(text = { Text(stringResource(R.string.editor_save_as)) }, enabled = enabled(EditorAction.SAVE),
                             onClick = { showFileMenu = false; state.inputSession?.finishComposingText(); onSaveAs() })
-                        DropdownMenuItem(text = { Text("Cerrar") }, enabled = enabled(EditorAction.CLOSE),
+                         DropdownMenuItem(text = { Text(stringResource(R.string.editor_close)) }, enabled = enabled(EditorAction.CLOSE),
                             onClick = { showFileMenu = false; dispatch(EditorAction.CLOSE) })
                     }
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(StructaSpacing.compact))
                 Box {
                     OutlinedButton(onClick = { dispatch(EditorAction.COMMAND_PALETTE) },
-                        shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Editor") }
+                          shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 12.dp)) { Text(stringResource(R.string.editor_edit_menu)) }
                     DropdownMenu(expanded = showEditMenu, onDismissRequest = { showEditMenu = false }) {
                         listOf(EditorAction.FIND, EditorAction.REPLACE, EditorAction.GO_TO_LINE,
                             EditorAction.UNDO, EditorAction.REDO, EditorAction.FORMAT).forEach { action ->
-                            DropdownMenuItem(text = { Text(action.title) }, enabled = enabled(action),
+                             DropdownMenuItem(text = { Text(actionName(action)) }, enabled = enabled(action),
                                 onClick = { showEditMenu = false; dispatch(action) })
                         }
-                        DropdownMenuItem(text = { Text("Formato") }, enabled = entry != null && !state.loading,
+                         DropdownMenuItem(text = { Text(stringResource(R.string.editor_format)) }, enabled = entry != null && !state.loading,
                             onClick = { showEditMenu = false; showFormatMenu = true })
                     }
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(StructaSpacing.compact))
             })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
@@ -142,10 +170,11 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                         Surface(color = if (tab.active) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = { onSelectDocument(tab.documentId) }) {
-                                    Text(tab.title + if (tab.dirty) " ●" else "")
+                                     Text(if (tab.dirty) stringResource(R.string.editor_dirty_title, tab.title) else tab.title)
                                 }
-                                TextButton(onClick = { onCloseDocument(tab.documentId) },
-                                    modifier = Modifier.semantics { contentDescription = "Cerrar ${tab.title}" }) { Text("×") }
+                                 val closeDescription = stringResource(R.string.editor_close_named, tab.title)
+                                 TextButton(onClick = { onCloseDocument(tab.documentId) },
+                                     modifier = Modifier.semantics { contentDescription = closeDescription }) { Text(stringResource(R.string.editor_close_tab)) }
                             }
                         }
                     }
@@ -153,15 +182,11 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
             }
             if (state.loading) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text("Abriendo archivo...", Modifier.padding(16.dp))
+                 Text(stringResource(R.string.editor_opening), Modifier.padding(16.dp))
             } else if (entry == null) {
-                Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("No hay un archivo abierto", style = MaterialTheme.typography.headlineSmall)
-                    Spacer(Modifier.height(12.dp))
-                    Text("Explora una carpeta y selecciona cualquier archivo para abrirlo como texto, JSON o YAML.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(24.dp))
-                    Button(onClick = onExplore) { Text("Ir a explorar") }
+                 EmptyScreen(stringResource(R.string.editor_no_file),
+                     stringResource(R.string.editor_no_file_description)) {
+                     Button(onClick = onExplore) { Text(stringResource(R.string.editor_go_explore)) }
                 }
             } else {
                  if (state.formatting || state.saving) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -170,27 +195,29 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                          modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).focusRequester(searchFocus).onPreviewKeyEvent {
                              if (it.type == KeyEventType.KeyDown && it.key == Key.Enter) { onFindNext(it.isShiftPressed); true }
                              else if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) { showSearch = false; true } else false
-                         }, singleLine = true, label = { Text("Buscar dentro del archivo") })
+                          }, singleLine = true, label = { Text(stringResource(R.string.editor_find_in_file)) })
                      Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                          FilterChip(selected = state.searchOptions.caseSensitive,
-                             onClick = { onSearchOptions(state.searchOptions.copy(caseSensitive = !state.searchOptions.caseSensitive)) }, label = { Text("Aa") })
+                              onClick = { onSearchOptions(state.searchOptions.copy(caseSensitive = !state.searchOptions.caseSensitive)) }, label = { Text(stringResource(R.string.editor_case_sensitive)) })
                          FilterChip(selected = state.searchOptions.wholeWord,
-                             onClick = { onSearchOptions(state.searchOptions.copy(wholeWord = !state.searchOptions.wholeWord)) }, label = { Text("Palabra") })
+                              onClick = { onSearchOptions(state.searchOptions.copy(wholeWord = !state.searchOptions.wholeWord)) }, label = { Text(stringResource(R.string.editor_whole_word)) })
                          FilterChip(selected = state.searchOptions.regex,
-                             onClick = { onSearchOptions(state.searchOptions.copy(regex = !state.searchOptions.regex)) }, label = { Text("Regex") })
-                         TextButton(onClick = { dispatch(EditorAction.FIND_PREVIOUS) }, enabled = enabled(EditorAction.FIND_PREVIOUS)) { Text("Anterior") }
-                         TextButton(onClick = { dispatch(EditorAction.FIND_NEXT) }, enabled = enabled(EditorAction.FIND_NEXT)) { Text("Siguiente") }
-                         TextButton(onClick = { showSearch = false }) { Text("Cerrar búsqueda") }
+                              onClick = { onSearchOptions(state.searchOptions.copy(regex = !state.searchOptions.regex)) }, label = { Text(stringResource(R.string.editor_regex)) })
+                          TextButton(onClick = { dispatch(EditorAction.FIND_PREVIOUS) }, enabled = enabled(EditorAction.FIND_PREVIOUS)) { Text(stringResource(R.string.editor_previous)) }
+                          TextButton(onClick = { dispatch(EditorAction.FIND_NEXT) }, enabled = enabled(EditorAction.FIND_NEXT)) { Text(stringResource(R.string.editor_next)) }
+                          TextButton(onClick = { showSearch = false }) { Text(stringResource(R.string.editor_close_search)) }
                      }
                      if (state.searching || state.replacing) LinearProgressIndicator(Modifier.fillMaxWidth())
-                     Text(state.searchResult.error ?: "${state.occurrences}${if (state.searchResult.truncated) "+ (acota la búsqueda)" else ""} coincidencias",
+                      Text(state.searchResult.error ?: if (state.searchResult.truncated)
+                          pluralStringResource(R.plurals.editor_matches_truncated, state.occurrences, state.occurrences)
+                          else pluralStringResource(R.plurals.editor_matches_count, state.occurrences, state.occurrences),
                          Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelMedium)
                       if (showReplace) {
                          TextField(state.replacement, onReplacement, singleLine = true,
-                             label = { Text("Reemplazo") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                              label = { Text(stringResource(R.string.editor_replacement)) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
                          Row {
-                             TextButton(onClick = { onReplace(false) }, enabled = enabled(EditorAction.FIND_NEXT)) { Text("Reemplazar actual") }
-                             TextButton(onClick = { onReplace(true) }, enabled = enabled(EditorAction.FIND_NEXT) && !state.searchResult.truncated) { Text("Reemplazar todo") }
+                              TextButton(onClick = { onReplace(false) }, enabled = enabled(EditorAction.FIND_NEXT)) { Text(stringResource(R.string.editor_replace_current)) }
+                              TextButton(onClick = { onReplace(true) }, enabled = enabled(EditorAction.FIND_NEXT) && !state.searchResult.truncated) { Text(stringResource(R.string.editor_replace_all)) }
                          }
                      }
                 }
@@ -206,7 +233,7 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
         }
     }
     if (showGoToLine) {
-        AlertDialog(onDismissRequest = { showGoToLine = false }, title = { Text("Ir a linea") },
+         AlertDialog(onDismissRequest = { showGoToLine = false }, title = { Text(stringResource(R.string.dialog_editor_go_to_line)) },
             text = {
                 LaunchedEffect(Unit) { withFrameNanos { }; lineFocus.requestFocus() }
                 TextField(requestedLine, onValueChange = { requestedLine = it.filter(Char::isDigit) },
@@ -214,35 +241,35 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                     if (it.type == KeyEventType.KeyDown && it.key == Key.Enter && requestedLine.toIntOrNull()?.let { n -> n > 0 } == true) {
                         onLine(requestedLine.toInt()); showGoToLine = false; true
                     } else if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) { showGoToLine = false; true } else false
-                }, singleLine = true, label = { Text("Numero de linea") }) },
+                 }, singleLine = true, label = { Text(stringResource(R.string.dialog_editor_line_number)) }) },
             confirmButton = { TextButton(enabled = requestedLine.toIntOrNull()?.let { it > 0 } == true,
-                onClick = { requestedLine.toIntOrNull()?.let(onLine); showGoToLine = false }) { Text("Aceptar") } },
-            dismissButton = { TextButton(onClick = { showGoToLine = false }) { Text("Cancelar") } })
+                 onClick = { requestedLine.toIntOrNull()?.let(onLine); showGoToLine = false }) { Text(stringResource(R.string.common_confirm)) } },
+             dismissButton = { TextButton(onClick = { showGoToLine = false }) { Text(stringResource(R.string.common_cancel)) } })
     }
     if (showFormatMenu) {
-        AlertDialog(onDismissRequest = { showFormatMenu = false }, title = { Text("Formato") },
+         AlertDialog(onDismissRequest = { showFormatMenu = false }, title = { Text(stringResource(R.string.editor_format)) },
             text = { Column {
                 FileMode.entries.forEach { mode ->
                     TextButton(enabled = entry != null && !state.loading,
                         onClick = { state.inputSession?.finishComposingText(); onMode(mode); showFormatMenu = false }) {
                         RadioButton(selected = state.mode == mode, onClick = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(mode.displayName)
+                         Text(modeName(mode))
                     }
                 }
             } }, confirmButton = {},
-            dismissButton = { TextButton(onClick = { showFormatMenu = false }) { Text("Cancelar") } })
+             dismissButton = { TextButton(onClick = { showFormatMenu = false }) { Text(stringResource(R.string.common_cancel)) } })
     }
     state.pendingClose?.let { id ->
         val title = state.tabs.firstOrNull { it.documentId == id }?.title.orEmpty()
         AlertDialog(onDismissRequest = onCancelClose,
-            title = { Text("Cerrar $title") },
-            text = { Text("Hay cambios sin guardar. ¿Quieres guardarlos antes de cerrar?") },
-            confirmButton = { TextButton(onClick = onSaveClose, enabled = !state.saving && state.pendingSave == null) { Text("Guardar y cerrar") } },
+             title = { Text(stringResource(R.string.editor_close_named, title)) },
+             text = { Text(stringResource(R.string.dialog_editor_unsaved_changes)) },
+             confirmButton = { TextButton(onClick = onSaveClose, enabled = !state.saving && state.pendingSave == null) { Text(stringResource(R.string.dialog_editor_save_close)) } },
             dismissButton = {
                 Row {
-                    TextButton(onClick = onDiscardClose, enabled = !state.saving) { Text("Descartar") }
-                    TextButton(onClick = onCancelClose) { Text("Cancelar") }
+                     TextButton(onClick = onDiscardClose, enabled = !state.saving) { Text(stringResource(R.string.dialog_editor_discard)) }
+                     TextButton(onClick = onCancelClose) { Text(stringResource(R.string.common_cancel)) }
                 }
             })
     }

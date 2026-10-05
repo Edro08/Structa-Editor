@@ -10,6 +10,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import com.edro08.structa.R
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
@@ -39,7 +42,7 @@ fun StructaApp() {
     val quickState by quickOpen.state.collectAsStateWithLifecycle()
     val settingsState by settings.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
-    var platformMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var platformMessage by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(editorState.tabs, browserState.workspace?.id) {
         browser.setOpenDocuments(editorState.tabs.map { it.documentId })
     }
@@ -61,7 +64,7 @@ fun StructaApp() {
                 try {
                     activity.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (_: SecurityException) {
-                    platformMessage = "El proveedor solo permite acceso temporal a esta carpeta."
+                    platformMessage = R.string.error_temporary_folder_access
                 }
             }
             browser.selectFolder(DocumentId(uri.toString()))
@@ -119,16 +122,17 @@ fun StructaApp() {
                             onFont = settings::selectFont, onFontSize = settings::selectFontSize)
                     }
                     editorState.message?.let { MessageOverlay(it, editor::dismissMessage) }
-                    if (quickState.visible) ProductivityPicker("Abrir", quickState.query, quickOpen::setQuery,
+                     if (quickState.visible) ProductivityPicker(stringResource(R.string.editor_open), quickState.query, quickOpen::setQuery,
                         quickState.files.map { it.entry.name to it.relativePath },
-                        quickState.message ?: "${quickState.indexedCount} archivos indexados · hasta 100 resultados",
+                         quickState.message ?: pluralStringResource(R.plurals.editor_indexed_count,
+                             quickState.indexedCount, quickState.indexedCount),
                         quickState.indexing, onChoose = { index ->
                             val entry = quickState.files[index].entry
                             quickOpen.close()
                             editor.open(entry)
                             screen = Screen.EDITOR
                         }, onDismiss = quickOpen::close)
-                    platformMessage?.let { MessageOverlay(it) { platformMessage = null } }
+                     if (platformMessage != 0) MessageOverlay(stringResource(platformMessage)) { platformMessage = 0 }
                 }
             }
         }

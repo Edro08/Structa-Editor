@@ -2,9 +2,9 @@ package com.edro08.structa.domain.settings
 
 import com.edro08.structa.domain.document.DocumentId
 
-enum class EditorFont(val label: String, val family: String) {
-    MONOSPACE("Monoespaciada", "monospace"),
-    SANS_MONOSPACE("Sans monoespaciada", "sans-serif-monospace")
+enum class EditorFont(val family: String) {
+    MONOSPACE("monospace"),
+    SANS_MONOSPACE("sans-serif-monospace")
 }
 
 interface SettingsRepository {

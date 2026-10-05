@@ -111,8 +111,8 @@ class ProductivityIntegrationTest {
             keyDown(Key.CtrlLeft); keyDown(Key.ShiftLeft); pressKey(Key.P); keyUp(Key.ShiftLeft); keyUp(Key.CtrlLeft)
         }
         compose.onNodeWithText("Ir a línea").performClick()
-        compose.onNodeWithText("Numero de linea").performTextInput("2")
-        compose.onNodeWithText("Numero de linea").performKeyInput { pressKey(Key.Enter) }
+         compose.onNodeWithText("Número de línea").performTextInput("2")
+         compose.onNodeWithText("Número de línea").performKeyInput { pressKey(Key.Enter) }
         compose.runOnIdle { assertEquals(TextRange(4), model.state.value.value.selection) }
         compose.onNodeWithText("Editar").performClick()
         compose.onNodeWithText("Formato", substring = false).performClick()

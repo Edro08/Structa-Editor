@@ -2,6 +2,7 @@ package com.edro08.structa.ui.screen.browser
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.edro08.structa.R
 import com.edro08.structa.application.browser.ListDirectory
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileEntry
@@ -17,11 +18,12 @@ import kotlinx.coroutines.launch
 
 data class BrowserUiState(
     val stack: List<DocumentId> = emptyList(),
-    val title: String = "Explorador",
+    val title: String = "",
     val query: String = "",
     val entries: List<FileEntry> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+    val errorRes: Int? = null,
     val workspace: Workspace? = null,
     val expanded: Set<DocumentId> = emptySet(),
     val children: Map<DocumentId, List<FileEntry>> = emptyMap(),
@@ -37,7 +39,7 @@ class BrowserViewModel(
     private val mutableState = MutableStateFlow(BrowserUiState())
     val state = mutableState.asStateFlow()
     private var entries = emptyList<FileEntry>()
-    private var titles = listOf("Explorador")
+    private var titles = listOf("")
     private var rootName: String? = null
     private var rootSelection = 0L
     private var request = 0L
@@ -49,7 +51,7 @@ class BrowserViewModel(
 
     fun selectFolder(id: DocumentId, persist: Boolean = true) {
         if (persist) settings.setLastFolder(id)
-        titles = listOf("Explorador")
+        titles = listOf("")
         rootName = null
         val selected = ++rootSelection
         treeGeneration++
@@ -112,7 +114,8 @@ class BrowserViewModel(
                     expanded = state.value.expanded + entry.id, children = state.value.children + (entry.id to children))
             } catch (exception: CancellationException) { throw exception
             } catch (exception: Exception) {
-                if (token == treeGeneration) mutableState.value = state.value.copy(error = exception.message)
+                if (token == treeGeneration) mutableState.value = state.value.copy(error = exception.message.orEmpty(),
+                    errorRes = R.string.error_folder_read_failed)
             } finally { if (token == treeGeneration) expanding.remove(entry.id) }
         }
     }
@@ -135,23 +138,23 @@ class BrowserViewModel(
     private fun protectOpenDocument(entry: FileEntry): Boolean {
         val opened = state.value.workspace?.openDocuments.orEmpty()
         val protected = entry.id in opened || (entry.isDirectory && opened.isNotEmpty())
-        if (protected) mutableState.value = state.value.copy(error =
-            "Cierra las pestañas afectadas antes de modificar archivos; para carpetas, cierra todas las pestañas.")
+        if (protected) mutableState.value = state.value.copy(error = "", errorRes = R.string.error_open_documents)
         return protected
     }
 
     private fun mutate(action: suspend (FileSystem) -> Unit) {
         val fs = fileSystem ?: return
         if (state.value.busy) return
-        mutableState.value = state.value.copy(busy = true, error = null)
+        mutableState.value = state.value.copy(busy = true, error = null, errorRes = null)
         viewModelScope.launch {
             try { action(fs); load()
             } catch (exception: CancellationException) { throw exception
-            } catch (exception: Exception) { mutableState.value = state.value.copy(error = exception.message ?: "Operación fallida")
+            } catch (exception: Exception) { mutableState.value = state.value.copy(error = exception.message.orEmpty(),
+                errorRes = R.string.error_operation_failed)
             } finally { mutableState.value = state.value.copy(busy = false) }
         }
     }
-    fun dismissError() { mutableState.value = state.value.copy(error = null) }
+    fun dismissError() { mutableState.value = state.value.copy(error = null, errorRes = null) }
 
     private fun load() {
         val id = state.value.stack.lastOrNull() ?: return
@@ -160,7 +163,7 @@ class BrowserViewModel(
         expanding.clear()
         job?.cancel()
         entries = emptyList()
-        mutableState.value = state.value.copy(entries = emptyList(), loading = true, error = null,
+        mutableState.value = state.value.copy(entries = emptyList(), loading = true, error = null, errorRes = null,
             expanded = emptySet(), children = emptyMap())
         job = viewModelScope.launch {
             try {
@@ -173,7 +176,7 @@ class BrowserViewModel(
                 throw exception
             } catch (exception: Exception) {
                 if (token == request) mutableState.value = state.value.copy(loading = false,
-                    error = "No se pudo leer la carpeta: ${exception.message}")
+                    error = exception.message.orEmpty(), errorRes = R.string.error_folder_read_failed)
             }
         }
     }
