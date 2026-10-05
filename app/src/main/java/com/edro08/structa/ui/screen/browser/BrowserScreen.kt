@@ -5,34 +5,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NoteAdd
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.edro08.structa.R
-import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileEntry
-import com.edro08.structa.ui.component.FileRow
-import com.edro08.structa.ui.component.ActionIconButton
-import com.edro08.structa.ui.component.EmptyScreen
-import com.edro08.structa.ui.component.StructaTopBar
+import com.edro08.structa.ui.component.*
+import com.edro08.structa.ui.theme.ScreenStyle
 import com.edro08.structa.ui.theme.StructaSpacing
 import com.edro08.structa.ui.theme.StructaSizes
 
@@ -45,7 +32,6 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
     var action by remember { mutableStateOf<BrowserAction?>(null) }
     var target by remember { mutableStateOf<FileEntry?>(null) }
     var name by remember { mutableStateOf("") }
-    var activeFile by remember(state.stack.lastOrNull()) { mutableStateOf<DocumentId?>(null) }
     if (action != null) AlertDialog(onDismissRequest = { action = null },
         title = { Text(stringResource(when (action!!) {
             BrowserAction.NEW_FILE -> R.string.browser_new_file
@@ -54,7 +40,8 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
             BrowserAction.DELETE -> R.string.browser_delete
         })) }, text = {
             if (action == BrowserAction.DELETE) Text(stringResource(R.string.dialog_browser_delete_confirm, target?.name.orEmpty()))
-            else TextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text(stringResource(R.string.browser_name)) })
+            else TextField(value = name, onValueChange = { name = it }, singleLine = true,
+                label = { Text(stringResource(R.string.browser_name)) })
         }, confirmButton = { TextButton(enabled = !state.busy && (action == BrowserAction.DELETE || name.isNotBlank()), onClick = {
             when (action) {
                 BrowserAction.DELETE -> target?.let(onDelete)
@@ -63,69 +50,74 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                 null -> Unit
             }
             action = null
-        }) { Text(stringResource(R.string.common_confirm)) } }, dismissButton = { TextButton(onClick = { action = null }) { Text(stringResource(R.string.common_cancel)) } })
-    Scaffold(topBar = { StructaTopBar(title = { Text(state.title.ifEmpty { stringResource(R.string.browser_title) }) }, onBack = onBack) }) { padding ->
+        }) { Text(stringResource(R.string.common_confirm)) } }, dismissButton = {
+            TextButton(onClick = { action = null }) { Text(stringResource(R.string.common_cancel)) }
+        })
+
+    Scaffold(containerColor = MaterialTheme.colorScheme.background,
+        topBar = { StructaTopBar(title = { Text(stringResource(R.string.browser_title)) }, onBack = onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = StructaSpacing.content),
-                verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onChooseFolder, enabled = !state.busy) {
-                    Icon(Icons.Filled.Folder, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.browser_workspace))
-                }
-                state.breadcrumbs.forEach { folder ->
-                    Icon(Icons.Filled.ChevronRight, contentDescription = null,
-                        modifier = Modifier.size(StructaSizes.breadcrumbIcon), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(folder, Modifier.padding(horizontal = StructaSpacing.compact), maxLines = 1)
+            WorkspacePanel(Modifier.fillMaxWidth().padding(horizontal = ScreenStyle.pagePadding), compact = true) {
+                Row(Modifier.horizontalScroll(rememberScrollState()).heightIn(min = 28.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onChooseFolder, enabled = !state.busy,
+                        contentPadding = PaddingValues(horizontal = 6.dp)) {
+                        Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(stringResource(R.string.browser_workspace))
+                    }
+                    state.breadcrumbs.forEach { folder ->
+                        Icon(Icons.Filled.ChevronRight, contentDescription = null,
+                            modifier = Modifier.size(StructaSizes.breadcrumbIcon),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(folder, Modifier.padding(horizontal = StructaSpacing.compact), maxLines = 1)
+                    }
                 }
             }
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = StructaSpacing.content),
-                verticalAlignment = Alignment.CenterVertically) {
-                ActionIconButton(onClick = onRetry, enabled = !state.busy && state.stack.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = ScreenStyle.pagePadding, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedIconButton(onClick = onRetry, enabled = !state.busy && state.stack.isNotEmpty(),
+                    modifier = Modifier.size(45.dp)) {
                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.browser_refresh))
                 }
                 if (state.stack.isNotEmpty()) {
-                    Spacer(Modifier.width(StructaSpacing.compact))
-                    FilledTonalButton(enabled = !state.busy, onClick = { name = ""; action = BrowserAction.NEW_FILE },
-                        contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(stringResource(R.string.browser_new_file))
-                    }
-                    Spacer(Modifier.width(StructaSpacing.compact))
-                    OutlinedButton(enabled = !state.busy, onClick = { name = ""; action = BrowserAction.NEW_FOLDER },
-                        contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        Icon(Icons.Filled.CreateNewFolder, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(stringResource(R.string.browser_new_folder))
-                    }
+                    WorkspaceActionChip(stringResource(R.string.browser_new_file), Icons.AutoMirrored.Filled.NoteAdd,
+                        !state.busy) { name = ""; action = BrowserAction.NEW_FILE }
+                    WorkspaceActionChip(stringResource(R.string.browser_new_folder), Icons.Filled.CreateNewFolder,
+                        !state.busy) { name = ""; action = BrowserAction.NEW_FOLDER }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = StructaSpacing.content,
-                vertical = StructaSpacing.compact)) {
-                TextField(value = state.query, onValueChange = onQuery, modifier = Modifier.fillMaxWidth(),
-                     singleLine = true, placeholder = { Text(stringResource(R.string.browser_search_hint)) },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) })
-            }
+            TextField(value = state.query, onValueChange = onQuery,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = ScreenStyle.pagePadding, vertical = 2.dp),
+                singleLine = true, placeholder = { Text(stringResource(R.string.browser_search_hint)) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                shape = RoundedCornerShape(ScreenStyle.panelRadius),
+                colors = TextFieldDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent))
+            Spacer(Modifier.height(7.dp))
             when {
-                 state.stack.isEmpty() -> EmptyScreen(stringResource(R.string.browser_no_folder)) {
-                     Button(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
+                state.stack.isEmpty() -> EmptyScreen(stringResource(R.string.browser_no_folder)) {
+                    Button(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
                 }
                 state.loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
                 state.error != null -> Column(Modifier.padding(StructaSpacing.section)) {
-                     Text(when (state.errorRes) {
-                         R.string.error_open_documents -> stringResource(R.string.error_open_documents)
-                         R.string.error_folder_read_failed -> if (state.error.isEmpty())
-                             stringResource(R.string.error_folder_read_failed_generic)
-                             else stringResource(R.string.error_folder_read_failed, state.error)
-                         else -> if (state.error.isEmpty()) stringResource(R.string.error_operation_failed)
-                             else stringResource(R.string.error_operation_failed_detail, state.error)
-                     })
-                     TextButton(onClick = onRetry) { Text(stringResource(R.string.browser_retry)) }
-                     TextButton(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
+                    Text(when (state.errorRes) {
+                        R.string.error_open_documents -> stringResource(R.string.error_open_documents)
+                        R.string.error_folder_read_failed -> if (state.error.isEmpty())
+                            stringResource(R.string.error_folder_read_failed_generic)
+                            else stringResource(R.string.error_folder_read_failed, state.error)
+                        else -> if (state.error.isEmpty()) stringResource(R.string.error_operation_failed)
+                            else stringResource(R.string.error_operation_failed_detail, state.error)
+                    })
+                    TextButton(onClick = onRetry) { Text(stringResource(R.string.browser_retry)) }
+                    TextButton(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
                 }
-                 state.entries.isEmpty() -> EmptyScreen(stringResource(R.string.browser_empty))
-                else -> LazyColumn(Modifier.fillMaxSize()) {
+                state.entries.isEmpty() -> EmptyScreen(stringResource(R.string.browser_empty))
+                else -> {
                     val rows = buildList<Pair<FileEntry, Int>> {
                         fun addEntries(entries: List<FileEntry>, depth: Int) {
                             entries.forEach { entry ->
@@ -135,39 +127,38 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                         }
                         addEntries(state.entries, 0)
                     }
-                    items(rows, key = { it.first.id.value }) { (entry, depth) ->
-                        Row(Modifier.padding(start = (depth * 16).dp)) {
-                             val actionsVisible = entry.isDirectory || activeFile == entry.id
-                             val actionsState = stringResource(if (actionsVisible) R.string.browser_actions_visible
-                                 else R.string.browser_actions_hidden)
-                            FileRow(entry, onClick = {
-                                if (entry.isDirectory) onEntry(entry)
-                                else activeFile = if (actionsVisible) null else entry.id
-                            }, modifier = if (entry.isDirectory) Modifier else Modifier.semantics {
-                                 stateDescription = actionsState
-                            }) {
-                                if (actionsVisible) {
-                                    ActionIconButton(enabled = !state.busy, onClick = { onEntry(entry) }) {
-                                        Icon(if (entry.isDirectory) Icons.Filled.FolderOpen else Icons.AutoMirrored.Filled.OpenInNew,
-                                             contentDescription = stringResource(R.string.browser_open_named, entry.name))
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(
+                        start = ScreenStyle.pagePadding, end = ScreenStyle.pagePadding, bottom = ScreenStyle.sectionGap),
+                        verticalArrangement = Arrangement.spacedBy(ScreenStyle.tileGap)) {
+                        items(rows, key = { it.first.id.value }) { (entry, depth) ->
+                            var menu by remember { mutableStateOf(false) }
+                            FileRow(entry, onClick = { onEntry(entry) },
+                                modifier = Modifier.padding(start = (depth * 14).dp),
+                                detail = if (entry.isDirectory) state.children[entry.id]?.let {
+                                pluralStringResource(R.plurals.browser_folder_elements, it.size, it.size)
+                            } else null) {
+                                Box {
+                                    IconButton(onClick = { menu = true }, enabled = !state.busy,
+                                        modifier = Modifier.size(38.dp)) {
+                                        Icon(Icons.Filled.MoreVert,
+                                            contentDescription = stringResource(R.string.browser_actions_named, entry.name),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    Spacer(Modifier.width(8.dp))
-                                    if (entry.isDirectory) {
-                                        ActionIconButton(enabled = !state.busy, onClick = { onToggle(entry) }) {
-                                            Icon(if (entry.id in state.expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                                 contentDescription = stringResource(if (entry.id in state.expanded) R.string.browser_collapse_named
-                                                     else R.string.browser_expand_named, entry.name))
-                                        }
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    ActionIconButton(enabled = !state.busy,
-                                         onClick = { target = entry; name = entry.name; action = BrowserAction.RENAME }) {
-                                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.browser_rename_named, entry.name))
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    ActionIconButton(enabled = !state.busy,
-                                         onClick = { target = entry; action = BrowserAction.DELETE }) {
-                                         Icon(Icons.Filled.DeleteOutline, contentDescription = stringResource(R.string.browser_delete_named, entry.name))
+                                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                        DropdownMenuItem(text = { Text(stringResource(R.string.browser_open_named, entry.name)) },
+                                            onClick = { menu = false; onEntry(entry) },
+                                            leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) })
+                                        if (entry.isDirectory) DropdownMenuItem(text = { Text(stringResource(
+                                            if (entry.id in state.expanded) R.string.browser_collapse_named
+                                            else R.string.browser_expand_named, entry.name)) },
+                                            onClick = { menu = false; onToggle(entry) },
+                                            leadingIcon = { Icon(Icons.Filled.ExpandMore, contentDescription = null) })
+                                        DropdownMenuItem(text = { Text(stringResource(R.string.browser_rename_named, entry.name)) },
+                                            onClick = { menu = false; target = entry; name = entry.name; action = BrowserAction.RENAME },
+                                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) })
+                                        DropdownMenuItem(text = { Text(stringResource(R.string.browser_delete_named, entry.name)) },
+                                            onClick = { menu = false; target = entry; action = BrowserAction.DELETE },
+                                            leadingIcon = { Icon(Icons.Filled.DeleteOutline, contentDescription = null) })
                                     }
                                 }
                             }

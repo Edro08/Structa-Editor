@@ -19,7 +19,9 @@ fun StructaTopBar(title: @Composable () -> Unit, onBack: (() -> Unit)? = null,
         if (onBack != null) IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
         }
-    }, actions = actions)
+    }, actions = actions, colors = TopAppBarDefaults.topAppBarColors(
+        containerColor = MaterialTheme.colorScheme.background,
+        scrolledContainerColor = MaterialTheme.colorScheme.background))
 }
 
 @Composable

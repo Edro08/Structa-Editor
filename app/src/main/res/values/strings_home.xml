@@ -1,0 +1,27 @@
+<resources>
+    <string name="home_title">Structa Editor</string>
+    <string name="home_subtitle">Acceso rápido a tus workspaces</string>
+    <string name="home_favorites">Favoritos</string>
+    <string name="home_recent">Recientes</string>
+    <string name="home_show_all">Ver todos</string>
+    <string name="home_show_less">Ver menos</string>
+    <string name="home_no_favorites">Marca una carpeta con la estrella para encontrarla aquí.</string>
+    <string name="home_empty_favorites">Todavía no hay favoritos.</string>
+    <string name="home_recent_hint">Tus últimos workspaces abiertos.</string>
+    <string name="home_no_recent">Todavía no hay workspaces recientes.</string>
+    <string name="home_open_workspace">Abrir workspace</string>
+    <string name="home_open_named_workspace">Abrir %1$s</string>
+    <string name="home_workspace_path">%1$s</string>
+    <string name="home_recent_detail">%1$s · %2$s</string>
+    <string name="home_opened_today">Abierto hoy</string>
+    <string name="home_opened_yesterday">Abierto ayer</string>
+    <plurals name="home_opened_days_ago">
+        <item quantity="one">Abierto hace %d día</item>
+        <item quantity="other">Abierto hace %d días</item>
+    </plurals>
+    <string name="home_favorite">Añadir a favoritos</string>
+    <string name="home_unfavorite">Quitar de favoritos</string>
+    <string name="home_remove_title">Quitar del historial</string>
+    <string name="home_remove_description">¿Quieres quitar «%1$s» del historial de Structa? La carpeta real no se eliminará.</string>
+    <string name="home_remove_confirm">Quitar</string>
+</resources>

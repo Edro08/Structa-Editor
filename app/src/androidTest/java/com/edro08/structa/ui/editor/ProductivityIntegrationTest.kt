@@ -65,14 +65,17 @@ class ProductivityIntegrationTest {
 
     @Test fun searchReplaceAllAndEditMenuUndoUseTheSameDocumentHistory() {
         launch()
-        compose.onNodeWithText("Editar").performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
         compose.onNodeWithText("Reemplazar", substring = false).performClick()
+        assertTrue("Reemplazar todo debe verse sin desplazamiento horizontal",
+            compose.onNodeWithText("Reemplazar todo").fetchSemanticsNode().boundsInWindow.right <=
+                compose.onRoot().fetchSemanticsNode().boundsInWindow.right)
         compose.onNodeWithText("Buscar dentro del archivo").performTextInput("cat")
         compose.waitUntil(5_000) { !model.state.value.searching && model.state.value.occurrences == 3 }
-        compose.onNodeWithText("Reemplazo").performTextInput("dog")
+        compose.onNodeWithText("Reemplazar por...").performTextInput("dog")
         compose.onNodeWithText("Reemplazar todo").performClick()
         compose.waitUntil(5_000) { model.state.value.value.text == "dog\ndog dog" }
-        compose.onNodeWithText("Editar").performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
         compose.onNodeWithText("Deshacer").performClick()
         compose.runOnIdle {
             assertEquals("cat\ncat CAT", model.state.value.value.text)
@@ -83,7 +86,7 @@ class ProductivityIntegrationTest {
     @Test fun quickOpenShortcutFuzzyQueryAndEnterOpenAndReuseTabs() {
         launch()
         compose.runOnIdle { model.edit(TextFieldValue("unsaved")) }
-        compose.onNodeWithText("Editar").performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
         compose.onNodeWithText("Buscar", substring = false).performClick()
         compose.onNodeWithText("Buscar dentro del archivo").performKeyInput {
             keyDown(Key.CtrlLeft); pressKey(Key.P); keyUp(Key.CtrlLeft)
@@ -105,7 +108,7 @@ class ProductivityIntegrationTest {
 
     @Test fun editMenuShortcutGoToLineAndFormatSelectionWork() {
         launch()
-        compose.onNodeWithText("Editar").performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
         compose.onNodeWithText("Buscar", substring = false).performClick()
         compose.onNodeWithText("Buscar dentro del archivo").performKeyInput {
             keyDown(Key.CtrlLeft); keyDown(Key.ShiftLeft); pressKey(Key.P); keyUp(Key.ShiftLeft); keyUp(Key.CtrlLeft)
@@ -114,8 +117,9 @@ class ProductivityIntegrationTest {
          compose.onNodeWithText("Número de línea").performTextInput("2")
          compose.onNodeWithText("Número de línea").performKeyInput { pressKey(Key.Enter) }
         compose.runOnIdle { assertEquals(TextRange(4), model.state.value.value.selection) }
-        compose.onNodeWithText("Editar").performClick()
-        compose.onNodeWithText("Formato", substring = false).performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+        compose.onNodeWithText("Lenguaje del archivo").assertExists()
         compose.onNodeWithText("Texto").assertExists()
         compose.onNodeWithText("JSON", substring = false).assertExists()
         compose.onNodeWithText("YAML").performClick()

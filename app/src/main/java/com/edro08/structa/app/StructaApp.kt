@@ -25,6 +25,7 @@ import com.edro08.structa.ui.screen.editor.*
 import com.edro08.structa.ui.screen.home.*
 import com.edro08.structa.ui.screen.settings.*
 import com.edro08.structa.ui.theme.StructaTheme
+import com.edro08.structa.ui.theme.StructaSystemBars
 import kotlinx.coroutines.CancellationException
 
 @Composable
@@ -68,7 +69,7 @@ fun StructaApp() {
                 }
             }
             browser.selectFolder(DocumentId(uri.toString()))
-            home.refresh()
+            home.opened(DocumentId(uri.toString()))
             screen = Screen.BROWSER
         }
     }
@@ -77,14 +78,19 @@ fun StructaApp() {
     }
 
     StructaTheme(darkTheme = settingsState.darkTheme) {
+        StructaSystemBars(activity, settingsState.darkTheme)
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Scaffold(bottomBar = {
                 if (screen != Screen.EDITOR) AppNavigation(screen) { screen = it }
             }) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding)) {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                     when (screen) {
-                        Screen.HOME -> HomeScreen(homeState, onOpenLastFolder = { screen = Screen.BROWSER },
-                            onChooseFolder = { folderPicker.launch(null) })
+                         Screen.HOME -> HomeScreen(homeState, onOpenWorkspace = { id ->
+                             browser.selectFolder(id)
+                             home.opened(id)
+                             screen = Screen.BROWSER
+                         }, onChooseFolder = { folderPicker.launch(null) },
+                             onToggleFavorite = home::toggleFavorite, onRemoveFromHistory = home::remove)
                         Screen.BROWSER -> BrowserScreen(browserState,
                             onBack = { if (!browser.back()) screen = Screen.HOME },
                             onChooseFolder = { folderPicker.launch(null) }, onQuery = browser::setQuery,

@@ -9,6 +9,7 @@ import com.edro08.structa.application.document.SaveDocumentCopy
 import com.edro08.structa.application.editor.ContentFormatDetector
 import com.edro08.structa.application.editor.FormatJsonDocument
 import com.edro08.structa.data.settings.AndroidSettingsRepository
+import com.edro08.structa.data.settings.AndroidWorkspaceHistoryRepository
 import com.edro08.structa.data.settings.AndroidSessionRepository
 import com.edro08.structa.data.filesystem.SafFileSystem
 import com.edro08.structa.ui.screen.browser.BrowserViewModel
@@ -24,6 +25,7 @@ class AppContainer(context: Context) {
     val fileWriter = fileSystem
     val sessions = AndroidSessionRepository(context.applicationContext)
     val settings = AndroidSettingsRepository(context.applicationContext)
+    val workspaceHistory = AndroidWorkspaceHistoryRepository(context.applicationContext, settings)
     val listDirectory = ListDirectory(directoryReader)
     val openDocument = OpenDocument(fileReader, ContentFormatDetector())
     val formatDocument = FormatJsonDocument()
@@ -32,7 +34,7 @@ class AppContainer(context: Context) {
     val factory = object : ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val model = when (modelClass) {
-                HomeViewModel::class.java -> HomeViewModel(settings)
+                HomeViewModel::class.java -> HomeViewModel(settings, workspaceHistory, fileSystem)
                 BrowserViewModel::class.java -> BrowserViewModel(listDirectory, settings, fileSystem)
                 EditorViewModel::class.java -> EditorViewModel(openDocument, formatDocument, saveDocumentCopy, sessions, fileSystem)
                 QuickOpenViewModel::class.java -> QuickOpenViewModel(listDirectory)

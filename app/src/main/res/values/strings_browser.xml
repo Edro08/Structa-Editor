@@ -10,6 +10,11 @@
     <string name="browser_retry">Reintentar</string>
     <string name="browser_actions_visible">Acciones visibles</string>
     <string name="browser_actions_hidden">Acciones ocultas</string>
+    <string name="browser_actions_named">Acciones de %1$s</string>
+    <plurals name="browser_folder_elements">
+        <item quantity="one">Carpeta · %d elemento</item>
+        <item quantity="other">Carpeta · %d elementos</item>
+    </plurals>
     <string name="browser_open_named">Abrir %1$s</string>
     <string name="browser_expand_named">Expandir %1$s</string>
     <string name="browser_collapse_named">Contraer %1$s</string>

@@ -14,7 +14,7 @@ import org.junit.Test
 class BrowserActionsTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun fileTapTogglesActionsAndOnlyOpenButtonOpensDocument() {
+    @Test fun fileTapOpensAndMoreMenuOffersActionsForSelectedDocument() {
         val first = FileEntry(DocumentId("one"), "one.txt", 10, false)
         val second = FileEntry(DocumentId("two"), "two.txt", 20, false)
         val opened = mutableListOf<DocumentId>()
@@ -25,20 +25,14 @@ class BrowserActionsTest {
             }
         }
 
+        compose.onNodeWithContentDescription("Acciones de one.txt").assertExists()
         compose.onNodeWithContentDescription("Abrir one.txt").assertDoesNotExist()
         compose.onNodeWithContentDescription("Renombrar one.txt").assertDoesNotExist()
         compose.onNodeWithContentDescription("Eliminar one.txt").assertDoesNotExist()
-        // Tap the far right of the collapsed row: the file information owns the whole width.
-        compose.onNodeWithText("one.txt").performTouchInput { click(percentOffset(0.95f, 0.5f)) }
-        compose.onNodeWithContentDescription("Abrir one.txt").assertExists()
-        compose.onNodeWithContentDescription("Abrir two.txt").assertDoesNotExist()
-        compose.runOnIdle { assertEquals(emptyList<DocumentId>(), opened) }
-
         compose.onNodeWithText("one.txt").performClick()
-        compose.onNodeWithContentDescription("Abrir one.txt").assertDoesNotExist()
-        compose.onNodeWithText("two.txt").performClick()
-        compose.onNodeWithContentDescription("Abrir two.txt").assertExists()
-        compose.onNodeWithContentDescription("Abrir two.txt").performClick()
-        compose.runOnIdle { assertEquals(listOf(second.id), opened) }
+        compose.runOnIdle { assertEquals(listOf(first.id), opened) }
+        compose.onNodeWithContentDescription("Acciones de two.txt").performClick()
+        compose.onNodeWithText("Abrir two.txt").performClick()
+        compose.runOnIdle { assertEquals(listOf(first.id, second.id), opened) }
     }
 }

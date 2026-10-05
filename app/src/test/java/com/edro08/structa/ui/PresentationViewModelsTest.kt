@@ -15,6 +15,8 @@ import com.edro08.structa.domain.filesystem.FileReader
 import com.edro08.structa.domain.filesystem.FileWriter
 import com.edro08.structa.domain.settings.SettingsRepository
 import com.edro08.structa.domain.settings.EditorFont
+import com.edro08.structa.domain.workspace.WorkspaceHistoryRepository
+import com.edro08.structa.domain.workspace.WorkspaceShortcut
 import com.edro08.structa.ui.screen.browser.BrowserViewModel
 import com.edro08.structa.ui.screen.editor.EditorViewModel
 import com.edro08.structa.ui.screen.home.HomeViewModel
@@ -228,7 +230,7 @@ class PresentationViewModelsTest {
             override suspend fun list(directory: DocumentId) = listOf(file, folder)
         }
         val model = BrowserViewModel(ListDirectory(directoryReader), settings)
-        val home = HomeViewModel(settings)
+        val home = HomeViewModel(settings, MemoryHistory())
         model.selectFolder(DocumentId("root"))
         runCurrent()
         home.refresh()
@@ -244,6 +246,39 @@ class PresentationViewModelsTest {
         runCurrent()
         assertFalse(model.back())
         assertEquals(DocumentId("root"), settings.lastFolder())
+    }
+
+    @Test fun homeSeparatesFavoritesFromRecentAndRemovalOnlyChangesHistory() {
+        val history = MemoryHistory()
+        val home = HomeViewModel(settings, history)
+        val first = DocumentId("first")
+        val second = DocumentId("second")
+        home.opened(first)
+        home.opened(second)
+        home.toggleFavorite(first)
+        assertEquals(listOf(first), home.state.value.favorites.map { it.id })
+        assertEquals(listOf(second), home.state.value.recent.map { it.id })
+        home.remove(first)
+        assertTrue(home.state.value.favorites.isEmpty())
+        assertEquals(listOf(second), home.state.value.recent.map { it.id })
+        home.toggleFavorite(second)
+        assertEquals(listOf(second), home.state.value.favorites.map { it.id })
+        home.toggleFavorite(second)
+        assertEquals(listOf(second), home.state.value.recent.map { it.id })
+    }
+
+    private class MemoryHistory : WorkspaceHistoryRepository {
+        private val entries = mutableListOf<WorkspaceShortcut>()
+        override fun all() = entries.toList()
+        override fun opened(id: DocumentId, at: Long) {
+            entries.removeAll { it.id == id }
+            entries.add(WorkspaceShortcut(id, id.value, null, at))
+        }
+        override fun rename(id: DocumentId, name: String) = Unit
+        override fun setFavorite(id: DocumentId, favorite: Boolean) {
+            entries.replaceAll { if (it.id == id) it.copy(favorite = favorite) else it }
+        }
+        override fun remove(id: DocumentId) { entries.removeAll { it.id == id } }
     }
 
     @Test fun browserDiscardsStaleListingAndReportsErrors() = runTest(dispatcher) {

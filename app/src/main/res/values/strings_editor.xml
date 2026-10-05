@@ -1,7 +1,7 @@
 <resources>
     <string name="editor_title">Editor</string>
     <string name="editor_file_menu">Archivo</string>
-    <string name="editor_edit_menu">Editar</string>
+    <string name="editor_edit_menu">Editor</string>
     <string name="editor_open">Abrir</string>
     <string name="editor_save">Guardar</string>
     <string name="editor_save_as">Guardar Como...</string>
@@ -12,7 +12,15 @@
     <string name="editor_undo">Deshacer</string>
     <string name="editor_redo">Rehacer</string>
     <string name="editor_format_document">Formatear</string>
-    <string name="editor_format">Formato</string>
+    <string name="editor_format">Lenguaje</string>
+    <string name="editor_language_dialog">Lenguaje del archivo</string>
+    <string name="editor_edit_menu_description">Menú Editor</string>
+    <string name="editor_shortcut_find">Ctrl + F</string>
+    <string name="editor_shortcut_replace">Ctrl + H</string>
+    <string name="editor_shortcut_line">Ctrl + G</string>
+    <string name="editor_shortcut_undo">Ctrl + Z</string>
+    <string name="editor_shortcut_redo">Ctrl + Y</string>
+    <string name="editor_accept">Aceptar</string>
     <string name="editor_text_mode">Texto</string>
     <string name="editor_json_mode">JSON</string>
     <string name="editor_yaml_mode">YAML</string>
@@ -47,8 +55,8 @@
         <item quantity="one">%d coincidencia</item>
         <item quantity="other">%d coincidencias</item>
     </plurals>
-    <string name="editor_replacement">Reemplazo</string>
-    <string name="editor_replace_current">Reemplazar actual</string>
+    <string name="editor_replacement">Reemplazar por...</string>
+    <string name="editor_replace_current">Reemplazar</string>
     <string name="editor_replace_all">Reemplazar todo</string>
     <string name="dialog_editor_go_to_line">Ir a línea</string>
     <string name="dialog_editor_line_number">Número de línea</string>
