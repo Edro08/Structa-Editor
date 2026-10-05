@@ -12,6 +12,10 @@ class EditHistory internal constructor(private val buffer: TextBuffer) {
     private val redoStack = ArrayDeque<EditTransaction>()
     private var pending: MutableList<EditOperation>? = null
     private var transactionStart: EditState? = null
+    private var transactionRevision = 0L
+    private var nextRevision = 0L
+    var revision: Long = 0L
+        private set
 
     val isInTransaction: Boolean get() = pending != null
     val canUndo: Boolean get() = !isInTransaction && undoStack.isNotEmpty()
@@ -20,9 +24,11 @@ class EditHistory internal constructor(private val buffer: TextBuffer) {
     internal fun apply(operation: EditOperation, before: EditState, after: EditState) {
         if (operation.removedText == operation.insertedText) return
         operation.applyTo(buffer)
+        val beforeRevision = revision
+        revision = ++nextRevision
         val operations = pending
         if (operations == null) {
-            undoStack.addLast(EditTransaction(listOf(operation), before, after))
+            undoStack.addLast(EditTransaction(listOf(operation), before, after, beforeRevision, revision))
         } else {
             operations.add(operation)
         }
@@ -32,13 +38,14 @@ class EditHistory internal constructor(private val buffer: TextBuffer) {
     internal fun beginTransaction(before: EditState) {
         check(!isInTransaction) { "Nested transactions are not supported" }
         transactionStart = before
+        transactionRevision = revision
         pending = mutableListOf()
     }
 
     internal fun commitTransaction(after: EditState) {
         val operations = checkNotNull(pending) { "No active transaction" }
         if (operations.isNotEmpty()) {
-            undoStack.addLast(EditTransaction(operations, checkNotNull(transactionStart), after))
+            undoStack.addLast(EditTransaction(operations, checkNotNull(transactionStart), after, transactionRevision, revision))
         }
         pending = null
         transactionStart = null
@@ -50,6 +57,7 @@ class EditHistory internal constructor(private val buffer: TextBuffer) {
         replay(transaction.operations.asReversed(), inverse = true)
         undoStack.removeLast()
         redoStack.addLast(transaction)
+        revision = transaction.beforeRevision
         return transaction.before
     }
 
@@ -59,6 +67,7 @@ class EditHistory internal constructor(private val buffer: TextBuffer) {
         replay(transaction.operations, inverse = false)
         redoStack.removeLast()
         undoStack.addLast(transaction)
+        revision = transaction.afterRevision
         return transaction.after
     }
 

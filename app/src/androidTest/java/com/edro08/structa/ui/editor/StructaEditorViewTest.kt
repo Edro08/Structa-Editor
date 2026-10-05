@@ -15,13 +15,57 @@ import com.edro08.structa.domain.editor.cursor.TextOffset
 import com.edro08.structa.domain.editor.document.EditorDocument
 import com.edro08.structa.ui.editor.render.EditorRenderer
 import com.edro08.structa.ui.editor.render.EditorStyle
+import com.edro08.structa.ui.editor.model.EditorViewState
 import com.edro08.structa.ui.editor.view.StructaEditorView
+import com.edro08.structa.domain.settings.EditorFont
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class StructaEditorViewTest {
+    @Test
+    fun changingEditorTypographyRecalculatesViewportWithoutEditingDocument() = onMain {
+        val editor = EditorEngine(EditorDocument(PieceTableBuffer("hello\n".repeat(100))))
+        val view = view(editor)
+        draw(view)
+        val firstLastLine = view.viewport.lastVisibleLine
+        view.style = view.style.copy(font = EditorFont.SANS_MONOSPACE, textSizeSp = 28f)
+        draw(view)
+        assertTrue(view.viewport.lastVisibleLine < firstLastLine)
+        assertEquals(EditorFont.SANS_MONOSPACE, view.style.font)
+        assertFalse(editor.canUndo)
+        assertEquals("hello\n".repeat(100), editor.document.buffer.getText(0, editor.document.buffer.length).toString())
+    }
+
+    @Test
+    fun drawingEditorPreservesSurroundingControlsOnSharedCanvas() = onMain {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val view = StructaEditorView(context)
+        view.layout(0, 0, 200, 100)
+        val bitmap = Bitmap.createBitmap(240, 180, Bitmap.Config.ARGB_8888)
+        try {
+            // AndroidView can share an unclipped canvas with Compose siblings.
+            // The strip above represents the search/replace panel.
+            repeat(2) { bound ->
+                if (bound == 1) view.bind(EditorEngine(EditorDocument(PieceTableBuffer("hello\nworld"))))
+                bitmap.eraseColor(android.graphics.Color.MAGENTA)
+                val canvas = Canvas(bitmap)
+                canvas.translate(20f, 40f)
+                val clip = canvas.clipBounds
+                view.draw(canvas)
+                assertEquals("Drawing must restore the caller's clip", clip, canvas.clipBounds)
+                for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+                    if (x !in 20 until 220 || y !in 40 until 140) {
+                        assertEquals("Editor painted over sibling at $x,$y (bound=$bound)",
+                            android.graphics.Color.MAGENTA, bitmap.getPixel(x, y))
+                    }
+                }
+                assertEquals(view.style.background, bitmap.getPixel(210, 130))
+            }
+        } finally { bitmap.recycle() }
+    }
+
     @Test
     fun scrollingReadsOnlyViewportAndNeverMutatesBuffer() = onMain {
         val original = PieceTableBuffer("line\n".repeat(99_999) + "end")
@@ -126,6 +170,29 @@ class StructaEditorViewTest {
         assertTrue(view.viewport.scrollY > 0f)
         assertEquals(TextOffset(0), editor.cursor.offset)
         assertFalse(editor.canUndo)
+    }
+
+    @Test
+    fun documentViewStatesRestoreBothAxesAcrossRebindingAndViewRecreation() = onMain {
+        val a = EditorEngine(EditorDocument(PieceTableBuffer(("x".repeat(200) + "\n").repeat(100))))
+        val b = EditorEngine(EditorDocument(PieceTableBuffer("other")))
+        val saved = EditorViewState()
+        val view = view(a)
+        view.bind(a, savedViewState = saved)
+        view.scrollToPosition(200f, 400f)
+        view.bind(b, savedViewState = EditorViewState())
+        draw(view)
+        assertEquals(0f, view.viewport.scrollY, 0f)
+        view.bind(a, savedViewState = saved)
+        draw(view)
+        assertEquals(200f, view.viewport.scrollX, 0f)
+        assertEquals(400f, view.viewport.scrollY, 0f)
+        val recreated = StructaEditorView(InstrumentationRegistry.getInstrumentation().targetContext)
+        recreated.bind(a, savedViewState = saved)
+        recreated.layout(0, 0, 600, 400)
+        draw(recreated)
+        assertEquals(200f, recreated.viewport.scrollX, 0f)
+        assertEquals(400f, recreated.viewport.scrollY, 0f)
     }
 
     private fun view(editor: EditorEngine): StructaEditorView =

@@ -25,6 +25,7 @@ class EditingSession internal constructor(
     val canUndo: Boolean get() = history.canUndo
     val canRedo: Boolean get() = history.canRedo
     val isInTransaction: Boolean get() = history.isInTransaction
+    val length: Int get() = buffer.length
 
     var cursor: Cursor = Cursor(TextOffset(0))
         private set

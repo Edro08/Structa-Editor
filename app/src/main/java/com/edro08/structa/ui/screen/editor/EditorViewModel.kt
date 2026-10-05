@@ -10,31 +10,52 @@ import com.edro08.structa.application.editor.FormatJsonDocument
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileEntry
 import com.edro08.structa.domain.filesystem.FileMode
+import com.edro08.structa.domain.filesystem.FileSystem
+import com.edro08.structa.domain.workspace.*
+import kotlinx.coroutines.delay
 import com.edro08.structa.domain.editor.EditorEngine
 import com.edro08.structa.domain.editor.buffer.PieceTableBuffer
 import com.edro08.structa.domain.editor.document.EditorDocument
 import com.edro08.structa.domain.editor.command.*
+import com.edro08.structa.domain.editor.search.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import com.edro08.structa.domain.editor.cursor.TextOffset
 import com.edro08.structa.domain.editor.cursor.TextRange as CoreTextRange
 import com.edro08.structa.ui.editor.input.EditorInputSession
+import com.edro08.structa.ui.editor.model.EditorViewState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class SaveSnapshot(val name: String, val content: String)
+data class SaveSnapshot(val name: String, val content: String,
+    val document: EditorDocument, val revision: Long)
+
+data class EditorTab(val documentId: DocumentId, val title: String, val dirty: Boolean, val active: Boolean)
 
 data class EditorUiState(
     val entry: FileEntry? = null,
     val value: TextFieldValue = TextFieldValue(),
     val mode: FileMode = FileMode.TEXT,
     val inputSession: EditorInputSession? = null,
+    val viewState: EditorViewState = EditorViewState(),
+    val tabs: List<EditorTab> = emptyList(),
+    val dirty: Boolean = false,
+    val pendingClose: DocumentId? = null,
     val contentVersion: Long = 0L,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
     val search: String = "",
     val occurrences: Int = 0,
+    val searchOptions: SearchOptions = SearchOptions(),
+    val searchResult: SearchResult = SearchResult(),
+    val searching: Boolean = false,
+    val replacing: Boolean = false,
+    val replacement: String = "",
+    val selectedMatch: Int = -1,
     val lineNumbers: String = "1",
     val lineStarts: List<Int> = listOf(0),
     val loading: Boolean = false,
@@ -47,7 +68,9 @@ data class EditorUiState(
 class EditorViewModel(
     private val openDocument: OpenDocument,
     private val formatDocument: FormatJsonDocument,
-    private val saveCopy: SaveDocumentCopy
+    private val saveCopy: SaveDocumentCopy,
+    private val sessionRepository: SessionRepository? = null,
+    private val fileSystem: FileSystem? = null
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(EditorUiState())
     val state = mutableState.asStateFlow()
@@ -55,8 +78,103 @@ class EditorViewModel(
     private var formatJob: Job? = null
     private var generation = 0L
     private var revision = 0L
+    private val documents = linkedMapOf<DocumentId, EditorUiState>()
+    private var savingDocument: EditorDocument? = null
+    private var restoring = false
+    private var checkpointJob: Job? = null
+    private val searchJobs = mutableMapOf<DocumentId, Job>()
+
+    init {
+        if (sessionRepository != null && fileSystem != null) {
+            restoring = true
+            mutableState.value = state.value.copy(loading = true)
+            viewModelScope.launch {
+                val failures = mutableListOf<String>()
+                try {
+                    val saved = sessionRepository.load()
+                    for (tab in saved.tabs) {
+                        try {
+                            val document = openDocument(fileSystem.stat(tab.id))
+                            register(document.entry, document.content, document.mode)
+                            val opened = documents.getValue(document.entry.id)
+                            opened.inputSession!!.setSelection(tab.anchor.coerceIn(0, document.content.length),
+                                tab.active.coerceIn(0, document.content.length))
+                            opened.viewState.scrollX = tab.scrollX
+                            opened.viewState.scrollY = tab.scrollY
+                        } catch (exception: CancellationException) { throw exception
+                        } catch (_: Exception) { failures += tab.id.value }
+                    }
+                    restoring = false
+                    val active = saved.active?.takeIf { it in documents } ?: documents.keys.firstOrNull()
+                    if (active != null) selectDocument(active)
+                    else mutableState.value = state.value.copy(loading = false)
+                    if (failures.isNotEmpty()) showMessage("No se pudieron restaurar ${failures.size} archivos. Comprueba los permisos o si fueron eliminados.")
+                    checkpointSession()
+                } catch (exception: CancellationException) { throw exception
+                } catch (exception: Exception) {
+                    mutableState.value = state.value.copy(loading = false,
+                        message = "No se pudo restaurar la sesión: ${exception.message}")
+                } finally { restoring = false }
+            }
+        }
+    }
+
+    private fun register(entry: FileEntry, content: String, mode: FileMode) {
+        val input = EditorInputSession(EditorEngine(EditorDocument(PieceTableBuffer(content), entry.id)))
+        input.addListener { textChanged ->
+            if (documents[entry.id]?.inputSession === input) syncInput(input, textChanged)
+        }
+        val view = EditorViewState().also { it.onScrollChanged = ::scheduleCheckpoint }
+        documents[entry.id] = derive(EditorUiState(entry = entry, value = TextFieldValue(content),
+            mode = mode, inputSession = input, viewState = view))
+    }
+
+    private fun scheduleCheckpoint() {
+        if (restoring || sessionRepository == null) return
+        checkpointJob?.cancel()
+        checkpointJob = viewModelScope.launch { delay(300); checkpointSession() }
+    }
+
+    fun checkpointSession() {
+        if (restoring) return
+        checkpointJob?.cancel()
+        checkpointJob = null
+        sessionRepository?.save(EditorSession(documents.map { (id, opened) ->
+            val input = opened.inputSession!!
+            SessionTab(id, input.anchor, input.active, opened.viewState.scrollX, opened.viewState.scrollY)
+        }, state.value.entry?.id))
+    }
+
+    private fun tabs(active: DocumentId? = state.value.entry?.id) = documents.map { (id, document) ->
+        EditorTab(id, document.entry!!.name, document.inputSession!!.engine.document.dirty, id == active)
+    }
+
+    private fun publish(document: EditorUiState) {
+        val id = document.entry?.id ?: return
+        val updated = document.copy(dirty = document.inputSession!!.engine.document.dirty, tabs = emptyList())
+        documents[id] = updated
+        mutableState.value = if (state.value.entry?.id == id) updated.copy(tabs = tabs())
+            else state.value.copy(tabs = tabs())
+        scheduleCheckpoint()
+    }
+
+    fun selectDocument(id: DocumentId) {
+        if (restoring) return
+        if (id !in documents) return
+        state.value.inputSession?.finishComposingText()
+        generation++
+        openJob?.cancel()
+        invalidateFormat()
+        val current = state.value
+        mutableState.value = documents.getValue(id).copy(loading = false, formatting = false,
+            pendingSave = current.pendingSave, saving = current.saving, pendingClose = current.pendingClose,
+            message = null, tabs = tabs(id), dirty = documents.getValue(id).inputSession!!.engine.document.dirty)
+        scheduleCheckpoint()
+    }
 
     fun open(entry: FileEntry) {
+        if (restoring) return
+        if (entry.id in documents) { selectDocument(entry.id); return }
         state.value.inputSession?.finishComposingText()
         val token = ++generation
         revision++
@@ -67,15 +185,8 @@ class EditorViewModel(
             try {
                 val document = openDocument(entry)
                 if (token != generation) return@launch
-                val previous = state.value
-                val input = EditorInputSession(EditorEngine(EditorDocument(PieceTableBuffer(document.content), document.entry.id)))
-                input.addListener { textChanged ->
-                    if (state.value.inputSession === input && !state.value.loading) syncInput(input, textChanged)
-                }
-                mutableState.value = derive(EditorUiState(entry = document.entry,
-                    value = TextFieldValue(document.content), mode = document.mode,
-                    inputSession = input,
-                    pendingSave = previous.pendingSave, saving = previous.saving))
+                register(document.entry, document.content, document.mode)
+                selectDocument(document.entry.id)
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
@@ -86,7 +197,7 @@ class EditorViewModel(
     }
 
     fun edit(value: TextFieldValue) {
-        if (state.value.loading) return
+        if (!canEdit(state.value)) return
         val input = state.value.inputSession ?: return
         val old = state.value.value.text
         if (value.text != old) {
@@ -101,28 +212,110 @@ class EditorViewModel(
     }
 
     private fun syncInput(input: EditorInputSession, textChanged: Boolean) {
-        if (textChanged) invalidateFormat()
-        val current = state.value
+        val active = state.value.inputSession === input
+        if (textChanged && active) invalidateFormat()
+        val current = if (active) state.value else documents[input.engine.document.id] ?: return
         val text = if (textChanged) input.buffer.getText(0, input.buffer.length).toString() else current.value.text
         val composing = input.composition?.let { TextRange(it.start.value, it.end.value) }
         val updated = current.copy(value = TextFieldValue(text, TextRange(input.anchor, input.active), composing),
             contentVersion = current.contentVersion + 1, canUndo = input.canUndo, canRedo = input.canRedo)
-        mutableState.value = if (textChanged) derive(updated) else updated
+        current.viewState.cursor = input.engine.cursor
+        current.viewState.selection = input.engine.selection
+        publish(if (textChanged) derive(updated) else updated)
+        if (textChanged) scheduleSearch(input.engine.document.id)
     }
 
     fun setMode(mode: FileMode) {
         invalidateFormat()
-        mutableState.value = state.value.copy(mode = mode)
+        publish(state.value.copy(mode = mode))
     }
 
-    fun setSearch(search: String) { mutableState.value = derive(state.value.copy(search = search), lines = false) }
+    fun setSearch(search: String) {
+        publish(state.value.copy(search = search))
+        state.value.entry?.id?.let(::scheduleSearch)
+    }
+
+    fun setSearchOptions(options: SearchOptions) {
+        publish(state.value.copy(searchOptions = options))
+        state.value.entry?.id?.let(::scheduleSearch)
+    }
+
+    fun setReplacement(text: String) { publish(state.value.copy(replacement = text)) }
+
+    private fun scheduleSearch(id: DocumentId) {
+        searchJobs.remove(id)?.cancel()
+        val snapshot = documents[id] ?: return
+        publish(snapshot.copy(searchResult = SearchResult(), occurrences = 0, selectedMatch = -1,
+            searching = snapshot.search.isNotEmpty(), replacing = false))
+        if (snapshot.search.isEmpty()) return
+        searchJobs[id] = viewModelScope.launch {
+            delay(120)
+            val result = withContext(Dispatchers.Default) {
+                DocumentSearch.find(snapshot.value.text, snapshot.search, snapshot.searchOptions,
+                    checkCancelled = { ensureActive() })
+            }
+            val current = documents[id] ?: return@launch
+            publish(current.copy(searchResult = result, occurrences = result.matches.size, searching = false))
+        }
+    }
+
+    fun findNext(backwards: Boolean = false) {
+        val current = state.value
+        if (current.loading || current.searching || current.replacing) return
+        val matches = current.searchResult.matches
+        if (matches.isEmpty()) return
+        val input = current.inputSession ?: return
+        input.finishComposingText()
+        val selected = current.selectedMatch.takeIf { index ->
+            index in matches.indices && matches[index].start == input.selectionStart && matches[index].end == input.selectionEnd
+        }
+        val index = if (selected != null) Math.floorMod(selected + if (backwards) -1 else 1, matches.size)
+            else if (backwards) matches.indexOfLast { it.end <= input.selectionStart }.takeIf { it >= 0 } ?: matches.lastIndex
+            else matches.indexOfFirst { it.start >= input.selectionEnd }.takeIf { it >= 0 } ?: 0
+        val match = matches[index]
+        input.setSelection(match.start, match.end)
+        publish(state.value.copy(selectedMatch = index))
+    }
+
+    fun replace(all: Boolean = false) {
+        state.value.inputSession?.finishComposingText()
+        val snapshot = state.value
+        if (!canEdit(snapshot) || snapshot.searching || snapshot.replacing || snapshot.search.isEmpty()) return
+        if (snapshot.searchResult.error != null || snapshot.searchResult.matches.isEmpty()) return
+        val input = snapshot.inputSession!!
+        val selected = snapshot.searchResult.matches.firstOrNull { it.start == input.selectionStart && it.end == input.selectionEnd }
+        if (!all && selected == null) { findNext(); return }
+        val id = snapshot.entry!!.id
+        val version = input.engine.document.revision
+        val documentToken = generation
+        searchJobs.remove(id)?.cancel()
+        publish(snapshot.copy(replacing = true))
+        searchJobs[id] = viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) {
+                DocumentSearch.find(snapshot.value.text, snapshot.search, snapshot.searchOptions, snapshot.replacement,
+                    replacementMatch = if (all) null else selected) { ensureActive() }
+            }
+            val current = documents[id] ?: return@launch
+            publish(current.copy(replacing = false))
+            if (input.engine.document.revision != version || documentToken != generation || state.value.entry?.id != id ||
+                current.search != snapshot.search || current.searchOptions != snapshot.searchOptions ||
+                current.replacement != snapshot.replacement ||
+                (!all && (input.selectionStart != selected!!.start || input.selectionEnd != selected.end))) return@launch
+            if (result.error != null || result.truncated) {
+                showMessage(result.error ?: "Demasiadas coincidencias. Acota la búsqueda antes de reemplazar.")
+                return@launch
+            }
+            val changes = if (all) result.matches else result.matches.filter { it.start == selected!!.start && it.end == selected.end }
+            if (changes.isNotEmpty()) input.execute(ReplaceMatchesCommand(changes))
+        }
+    }
 
     fun undo() {
-        if (!state.value.loading) state.value.inputSession?.execute(UndoCommand)
+        if (canEdit(state.value)) state.value.inputSession?.execute(UndoCommand)
     }
 
     fun redo() {
-        if (!state.value.loading) state.value.inputSession?.execute(RedoCommand)
+        if (canEdit(state.value)) state.value.inputSession?.execute(RedoCommand)
     }
 
     fun goToLine(line: Int) {
@@ -135,7 +328,7 @@ class EditorViewModel(
     fun format() {
         state.value.inputSession?.finishComposingText()
         val snapshot = state.value
-        if (snapshot.entry == null || snapshot.loading) return
+        if (!canEdit(snapshot)) return
         invalidateFormat()
         val token = revision
         val documentToken = generation
@@ -160,8 +353,9 @@ class EditorViewModel(
         state.value.inputSession?.finishComposingText()
         val current = state.value
         val entry = current.entry ?: return null
-        if (current.loading || current.pendingSave != null || current.saving) return null
-        val snapshot = SaveSnapshot(entry.name, current.value.text)
+        if (!canEdit(current) || current.pendingSave != null || current.saving) return null
+        val document = current.inputSession!!.engine.document
+        val snapshot = SaveSnapshot(entry.name, current.value.text, document, document.revision)
         mutableState.value = current.copy(pendingSave = snapshot)
         return snapshot
     }
@@ -170,18 +364,91 @@ class EditorViewModel(
         val snapshot = state.value.pendingSave ?: return
         mutableState.value = state.value.copy(pendingSave = null)
         if (destination == null) return
+        if (destination != snapshot.document.id && destination in documents) {
+            showMessage("El destino está abierto en otra pestaña. Guarda desde esa pestaña.")
+            return
+        }
+        writeSnapshot(snapshot, destination, closeAfter = false)
+    }
+
+    fun save() { saveDocument(state.value.entry?.id ?: return, closeAfter = false) }
+
+    private fun saveDocument(id: DocumentId, closeAfter: Boolean) {
+        if (state.value.saving || state.value.pendingSave != null) return
+        val opened = documents[id] ?: return
+        if (!canEdit(opened)) return
+        opened.inputSession!!.finishComposingText()
+        val document = opened.inputSession.engine.document
+        val snapshot = SaveSnapshot(opened.entry!!.name,
+            document.buffer.getText(0, document.buffer.length).toString(), document, document.revision)
+        writeSnapshot(snapshot, id, closeAfter)
+    }
+
+    private fun writeSnapshot(snapshot: SaveSnapshot, destination: DocumentId, closeAfter: Boolean) {
+        savingDocument = snapshot.document
         mutableState.value = state.value.copy(saving = true, message = null)
         viewModelScope.launch {
             try {
                 saveCopy(destination, snapshot.content)
-                mutableState.value = state.value.copy(saving = false, message = "Archivo guardado correctamente.")
+                if (destination == snapshot.document.id) snapshot.document.markSaved(snapshot.revision)
+                savingDocument = null
+                val activeDirty = state.value.inputSession?.engine?.document?.dirty ?: false
+                mutableState.value = state.value.copy(saving = false, dirty = activeDirty, tabs = tabs(),
+                    message = if (destination == snapshot.document.id) "Archivo guardado correctamente." else "Copia guardada correctamente.")
+                if (closeAfter && state.value.pendingClose == snapshot.document.id && !snapshot.document.dirty)
+                    removeDocument(snapshot.document.id)
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
+                savingDocument = null
                 mutableState.value = state.value.copy(saving = false, message = "No se pudo guardar el archivo: ${exception.message}")
             }
         }
     }
+
+    fun requestClose(id: DocumentId) {
+        val opened = documents[id] ?: return
+        opened.inputSession!!.finishComposingText()
+        if (savingDocument === opened.inputSession.engine.document) {
+            showMessage("Espera a que termine el guardado.")
+            return
+        }
+        if (opened.inputSession.engine.document.dirty) mutableState.value = state.value.copy(pendingClose = id)
+        else removeDocument(id)
+    }
+
+    fun cancelClose() { mutableState.value = state.value.copy(pendingClose = null) }
+    fun discardAndClose() {
+        val id = state.value.pendingClose ?: return
+        if (savingDocument?.id != id) removeDocument(id)
+    }
+    fun saveAndClose() { saveDocument(state.value.pendingClose ?: return, closeAfter = true) }
+
+    private fun removeDocument(id: DocumentId) {
+        val keys = documents.keys.toList()
+        val index = keys.indexOf(id)
+        if (index < 0) return
+        documents.remove(id)
+        searchJobs.remove(id)?.cancel()
+        val current = state.value
+        mutableState.value = current.copy(pendingClose = null,
+            pendingSave = current.pendingSave?.takeUnless { it.document.id == id }, tabs = tabs())
+        if (current.entry?.id == id) {
+            val next = documents.keys.toList().getOrNull(index.coerceAtMost(documents.size - 1))
+            if (next != null) selectDocument(next)
+            else {
+                generation++
+                openJob?.cancel()
+                invalidateFormat()
+                mutableState.value = EditorUiState(saving = current.saving, message = current.message,
+                    pendingSave = state.value.pendingSave)
+            }
+        }
+        scheduleCheckpoint()
+    }
+
+    private fun canEdit(document: EditorUiState): Boolean =
+        document.entry != null && !document.loading && document.inputSession != null
 
     fun showMessage(message: String) { mutableState.value = state.value.copy(message = message) }
     fun dismissMessage() { mutableState.value = state.value.copy(message = null) }
@@ -198,15 +465,7 @@ class EditorViewModel(
             add(0)
             content.forEachIndexed { index, char -> if (char == '\n') add(index + 1) }
         } else current.lineStarts
-        var count = 0
-        if (current.search.isNotBlank()) {
-            var index = content.indexOf(current.search, ignoreCase = true)
-            while (index >= 0) {
-                count++
-                index = content.indexOf(current.search, index + current.search.length, ignoreCase = true)
-            }
-        }
-        return current.copy(occurrences = count, lineStarts = starts,
+        return current.copy(lineStarts = starts,
             lineNumbers = if (lines) (1..starts.size.coerceAtMost(1_000)).joinToString("\n") else current.lineNumbers)
     }
 }

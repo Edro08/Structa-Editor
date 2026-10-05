@@ -13,7 +13,9 @@ data class EditState(val cursor: Cursor, val selection: Selection?) {
 class EditTransaction internal constructor(
     operations: List<EditOperation>,
     val before: EditState,
-    val after: EditState
+    val after: EditState,
+    internal val beforeRevision: Long,
+    internal val afterRevision: Long
 ) {
     val operations: List<EditOperation> = operations.toList()
 }

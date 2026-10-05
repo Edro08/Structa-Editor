@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.ui.component.MessageOverlay
 import com.edro08.structa.ui.navigation.*
@@ -29,13 +31,26 @@ fun StructaApp() {
     val home: HomeViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val browser: BrowserViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val editor: EditorViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
+    val quickOpen: QuickOpenViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val settings: SettingsViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val homeState by home.state.collectAsStateWithLifecycle()
     val browserState by browser.state.collectAsStateWithLifecycle()
     val editorState by editor.state.collectAsStateWithLifecycle()
+    val quickState by quickOpen.state.collectAsStateWithLifecycle()
     val settingsState by settings.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var platformMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(editorState.tabs, browserState.workspace?.id) {
+        browser.setOpenDocuments(editorState.tabs.map { it.documentId })
+    }
+    LaunchedEffect(browserState.workspace?.root) { quickOpen.setRoot(browserState.workspace?.root?.id) }
+    DisposableEffect(activity, editor) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) editor.checkpointSession()
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { editor.checkpointSession(); activity.lifecycle.removeObserver(observer) }
+    }
 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -43,7 +58,11 @@ fun StructaApp() {
                 activity.contentResolver.takePersistableUriPermission(uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             } catch (_: SecurityException) {
-                platformMessage = "El proveedor solo permite acceso temporal a esta carpeta."
+                try {
+                    activity.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: SecurityException) {
+                    platformMessage = "El proveedor solo permite acceso temporal a esta carpeta."
+                }
             }
             browser.selectFolder(DocumentId(uri.toString()))
             home.refresh()
@@ -54,9 +73,11 @@ fun StructaApp() {
         editor.completeSave(uri?.let { DocumentId(it.toString()) })
     }
 
-    StructaTheme {
+    StructaTheme(darkTheme = settingsState.darkTheme) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Scaffold(bottomBar = { AppNavigation(screen) { screen = it } }) { padding ->
+            Scaffold(bottomBar = {
+                if (screen != Screen.EDITOR) AppNavigation(screen) { screen = it }
+            }) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
                     when (screen) {
                         Screen.HOME -> HomeScreen(homeState, onOpenLastFolder = { screen = Screen.BROWSER },
@@ -69,11 +90,18 @@ fun StructaApp() {
                                     editor.open(entry)
                                     screen = Screen.EDITOR
                                 }
-                            }, onRetry = browser::refresh)
+                             }, onRetry = browser::refresh, onToggle = browser::toggleFolder,
+                             onCreate = browser::create, onRename = browser::rename, onDelete = browser::delete)
                         Screen.EDITOR -> EditorScreen(editorState, onBack = { screen = Screen.BROWSER },
+                            editorFont = settingsState.editorFont, editorFontSize = settingsState.editorFontSize,
                             onExplore = { screen = Screen.BROWSER }, onMode = editor::setMode,
-                            onMessage = editor::showMessage,
-                            onSearch = editor::setSearch, onFormat = editor::format, onUndo = editor::undo,
+                             onMessage = editor::showMessage,
+                             onSave = editor::save, onSelectDocument = editor::selectDocument,
+                             onCloseDocument = editor::requestClose, onCancelClose = editor::cancelClose,
+                             onDiscardClose = editor::discardAndClose, onSaveClose = editor::saveAndClose,
+                             onSearch = editor::setSearch, onFormat = editor::format, onUndo = editor::undo,
+                             onSearchOptions = editor::setSearchOptions, onReplacement = editor::setReplacement,
+                             onFindNext = editor::findNext, onReplace = editor::replace, onQuickOpen = quickOpen::open,
                             onRedo = editor::redo, onLine = editor::goToLine, onSaveAs = {
                                 editor.prepareSave()?.let { snapshot ->
                                     try {
@@ -87,9 +115,19 @@ fun StructaApp() {
                                 }
                             })
                         Screen.SETTINGS -> SettingsScreen(settingsState, onBack = { screen = Screen.HOME },
-                            onProvider = settings::selectProvider)
+                            onProvider = settings::selectProvider, onTheme = settings::selectTheme,
+                            onFont = settings::selectFont, onFontSize = settings::selectFontSize)
                     }
                     editorState.message?.let { MessageOverlay(it, editor::dismissMessage) }
+                    if (quickState.visible) ProductivityPicker("Abrir", quickState.query, quickOpen::setQuery,
+                        quickState.files.map { it.entry.name to it.relativePath },
+                        quickState.message ?: "${quickState.indexedCount} archivos indexados · hasta 100 resultados",
+                        quickState.indexing, onChoose = { index ->
+                            val entry = quickState.files[index].entry
+                            quickOpen.close()
+                            editor.open(entry)
+                            screen = Screen.EDITOR
+                        }, onDismiss = quickOpen::close)
                     platformMessage?.let { MessageOverlay(it) { platformMessage = null } }
                 }
             }

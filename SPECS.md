@@ -1,6 +1,57 @@
 # Structa — Plan técnico para editor Android propio
 
+## Estado posterior a fase 11 — edición de archivos grandes (2026-10-04)
+
+La fase 12 queda pospuesta por petición del usuario. Se retiró el bloqueo heredado
+de edición de archivos mayores de 1 MB y el aviso multilínea de solo lectura.
+Edición, cursor, guardar original/copia, Undo/Redo, formato y reemplazo ya no se
+deshabilitan por ese tamaño. Tampoco se rechaza un reemplazo porque el documento
+resultante exceda 1 MB. Las referencias al límite editable en los cierres de fases
+anteriores son históricas y quedan sustituidas por esta nota.
+
+Se mantienen límites independientes: apertura de 25 MB, resaltado hasta 1 048 576
+unidades UTF-16 y expansión de reemplazos hasta 1 048 576 unidades UTF-16 por
+operación. El indicador de límite de resaltado permanece visible.
+
+Validación: **138 JVM y 29 instrumentadas aprobadas**, cero fallos/errores/omisiones
+en los informes finales; APK app y tests compilados. Las pruebas nuevas cubren
+documentos de más de 2 MB: IME, selección, scroll, Undo/Redo, reemplazo y ambos
+guardados mediante writers simulados. JVM XML 2026-10-04T16:47:55Z–16:47:57Z;
+Android XML 2026-10-04T16:52:55, Pixel_6_Pro Android 12. Última ejecución
+`:app:connectedDebugAndroidTest`: BUILD SUCCESSFUL en 1m 24s. Se ajustó la prueba
+de sintaxis para admitir resultados nuevos que terminan antes de su aserción,
+manteniendo el rechazo de rangos obsoletos.
+
+La edición IME medida puntualmente tardó 32 ms en el emulador. No constituye una
+garantía de fluidez: `syncInput` y `derive` conservan recorridos completos O(n).
+
+Instalación final: `:app:installDebug`, BUILD SUCCESSFUL en 16 s. Aplicación
+abierta en Pixel_6_Pro; UIAutomator confirma el documento de 2 MB y 52 132 líneas,
+sin el aviso de solo lectura y con las acciones de edición/guardado habilitadas.
+
 ## 1. Objetivo
+
+**Corrección gráfica posterior:** el Canvas de `StructaEditorView` se recorta
+a sus límites locales antes de dibujar y restaura el clip al terminar. Evita que
+el fondo tape los paneles Compose de Buscar/Reemplazar. Regresión con Canvas
+compartido reproducida antes del arreglo y aprobada después; 7 instrumentadas de
+vista y 3 de productividad aprobadas en ejecuciones separadas.
+
+**Ajuste de UI posterior:** retirado el DropdownMenu de formato y las filas
+permanentes de herramientas, metadata y guardado. Acciones, guardar copia y modos
+de formato se acceden desde Comandos. Metadata y dirty de documento único están
+en la barra superior; pestañas solo con varios documentos. Editor ocupa desde la
+barra superior hasta navegación inferior, salvo panel de búsqueda abierto.
+Verificado en Pixel_6_Pro: 2364 px de altura (+700 px); 6 instrumentadas de
+documentos/productividad aprobadas y aplicación instalada.
+
+**Reorganización posterior de menús:** barra con icono Atrás, información del
+archivo y botones enmarcados Archivo / Editar. Archivo: Abrir, Guardar,
+Guardar Como... y Cerrar. Editar: Buscar, Reemplazar, Ir a línea, Deshacer,
+Rehacer, Formatear y Formato (selector Texto/JSON/YAML). Sustituye Comandos y
+su paleta filtrable; Ctrl+Shift+P abre Editar. Quick Open deja de ser una opción
+separada: el selector se llama Abrir, conservando Ctrl+P. Guardar Como... conserva
+la semántica de exportar copia. Seis instrumentadas focalizadas aprobadas (24 s).
 
 Construir un editor de código propio para Android, sin utilizar motores de edición de terceros como Sora Editor.
 
@@ -1298,11 +1349,8 @@ Requisitos:
 
 # 43. Syntax Highlighting
 
-No implementar inmediatamente.
-
-Primero completar edición estable.
-
-Posteriormente crear:
+Implementado en fase 11, después de completar edición estable. Alcance léxico y
+límites documentados en el cierre de esa fase. API y tokenizadores en:
 
 ```text
 domain/editor/syntax/
@@ -1550,7 +1598,7 @@ usando `LineIndex`.
 
 # 53. Language Registry
 
-Crear posteriormente:
+Implementado en fase 11:
 
 ```text
 LanguageRegistry
@@ -1934,10 +1982,9 @@ para el mismo engine; cambiar el engine vuelve al inicio. Después de comandos e
 se llama a `refresh()` o se incrementa `contentVersion` en el componente Compose.
 Al cambiar contenido o dimensiones se ajusta el scroll a los límites disponibles.
 
-Integración gradual: esta fase conecta la superficie de lectura para archivos grandes.
-El renderer ya puede representar cursor y selección del engine. La sustitución del
-área editable actual con input táctil, teclado e IME corresponde a la fase 7; por ello
-el segundo milestone todavía requiere esa fase. Word wrap y layout Unicode avanzado
+Integración gradual: esta fase conectó la superficie de lectura para archivos grandes.
+La fase 7 completó la sustitución del área editable con input táctil, teclado e IME
+y la verificación del segundo milestone. Word wrap y layout Unicode avanzado
 mantienen su planificación posterior.
 
 Verificación ejecutada en el emulador `Pixel_6_Pro` con Android 12:
@@ -1969,6 +2016,63 @@ scroll
 
 ## Fase 7 — Input
 
+### Estado: implementación completada y verificación automatizada aprobada
+
+Cierre técnico: 2026-10-03. La matriz manual de teclados comerciales de la sección 32
+queda pendiente; este cierre no certifica compatibilidad verificada con Gboard,
+SwiftKey y Samsung Keyboard en todos sus dispositivos/versiones.
+
+- [x] Toque para posicionar cursor, doble toque/pulsación larga para seleccionar
+  palabra y arrastre para extender selección; menú contextual flotante.
+- [x] `EditorInputSession` compartida por engine, View e integración de pantalla:
+  composición provisional reemplazable, batches y confirmación agrupada en historial.
+- [x] `EditorInputConnection` sin backing `Editable`: commit, composición, selección,
+  consultas de contexto y borrado circundante UTF-16/por codepoints.
+- [x] Borrado respeta selección/composición y pares surrogate; rechazo de secuencias
+  inválidas sin ediciones parciales y de escrituras desde conexiones cerradas.
+- [x] Teclado físico: escritura, Enter/Tab, Backspace/Delete, navegación y selección
+  con Shift; Ctrl/Meta para selección, clipboard e historial.
+- [x] Shortcuts de aplicación enrutados mediante `EditorAction`, sin duplicar edición.
+- [x] Clipboard del sistema: copiar, cortar, pegar y seleccionar todo; las mutaciones
+  utilizan comandos y comparten Undo/Redo con el teclado y la toolbar.
+- [x] Foco, apertura real del IME, cursor parpadeante, composición subrayada y revelado
+  del cursor también al reducirse la altura de la vista enfocada.
+- [x] `EditorScreen` utiliza `StructaEditor` con `imePadding`; conservar engine/sesión
+  al actualizar versión no reinicia la conexión IME. Cambiar documento o pasar a solo
+  lectura cierra la conexión anterior y confirma composición.
+- [x] Segundo milestone implementado y verificado sobre la View propia.
+
+**Resultados comprobados:** 99 pruebas JVM y 16 instrumentadas (11 de input y 5 de
+renderer), cero fallos, errores u omisiones. APK debug y APK de pruebas compilados.
+Instrumentadas ejecutadas en `Pixel_6_Pro`, Android 12; XML del cierre con timestamp
+`2026-10-03T22:38:57`.
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+.\gradlew.bat :app:connectedDebugAndroidTest
+```
+
+Cobertura crítica: composición y Undo agrupado, cursores relativos del IME, batches,
+borrado por codepoints, consultas de selección, teclado físico, clipboard, gestos,
+apertura del teclado del sistema, cambio/cierre de conexión, transición a solo lectura
+y cursor visible al reducir el viewport. La pulsación larga verifica la acción real
+«Copiar» del menú flotante mediante Espresso. La integración del ViewModel comprueba
+historial compartido y guardado durante composición.
+
+Alcance y límites actuales:
+
+- Contrato UTF-16; grafemas y bidi avanzados siguen pendientes. Los handles de selección
+  conservan su carácter opcional/posterior.
+- Composición agrupada en una transacción; sin agrupación temporal automática del tecleo.
+- Replace, Quick Open y Command Palette tienen shortcuts enrutados y mensaje de función
+  pendiente; sus interfaces corresponden a la fase 10.
+- Edición interactiva hasta 1 MB; archivos mayores en solo lectura. `TextFieldValue`
+  permanece como snapshot de presentación y `syncInput` reconstruye texto/derivados
+  al cambiar contenido; no es el motor de edición.
+- Validación automatizada del contrato IME y apertura del teclado del emulador;
+  pendiente la matriz manual de Gboard, SwiftKey y Samsung Keyboard.
+
 Implementar:
 
 ```text
@@ -1983,6 +2087,59 @@ shortcuts
 ---
 
 ## Fase 8 — Documents
+
+### Estado: completada
+
+Cierre técnico: 2026-10-03.
+
+- [x] Múltiples documentos abiertos, identificados por `DocumentId`, con un
+  `EditorDocument`, `EditorEngine` e `EditorInputSession` independientes por pestaña.
+- [x] Abrir un documento ya abierto activa su pestaña sin releer el archivo ni
+  sustituir sus cambios, selección o historial.
+- [x] Pestañas con título, estado activo, indicador `●` de cambios pendientes y cierre.
+- [x] Cambio de documento conserva texto, Undo/Redo, cursor/selección, modo, búsqueda
+  y scroll horizontal/vertical. La composición IME se confirma antes del cambio.
+- [x] `EditorViewState` separado del documento: snapshot de cursor/selección y scroll
+  en memoria; la posición lógica autoritativa sigue perteneciendo al engine.
+  La View restaura el scroll al cambiar pestaña y al recrear la superficie.
+- [x] `EditorDocument.revision`, `savedRevision` y `dirty` basados en identidades de
+  revisión del historial, sin comparar ni guardar snapshots completos del contenido.
+  Undo/Redo restaura revisiones; una rama nueva recibe identificadores distintos.
+- [x] Guardar y Ctrl/Meta+S escriben en el archivo abierto mediante el puerto
+  `FileWriter` y su adaptador SAF existente. Solo un guardado exitoso actualiza la
+  revisión guardada del documento correspondiente.
+- [x] Guardar copia mantiene la exportación mediante el selector del sistema; un
+  destino distinto no marca limpio el archivo original ni cambia su identidad.
+- [x] Cierre de documento limpio inmediato; documento modificado ofrece Guardar y
+  cerrar, Descartar o Cancelar. Un fallo de escritura conserva la pestaña y sus cambios.
+- [x] Guardado asíncrono captura contenido y revisión: editar o cambiar de pestaña
+  durante la escritura no marca limpios cambios posteriores ni otro documento.
+  Guardar y cerrar conserva la pestaña si aparecieron cambios nuevos.
+
+**Verificación:** 107 pruebas JVM y 19 instrumentadas, sin fallos, errores u omisiones;
+APK debug y APK de pruebas compilados. JVM: XML `2026-10-03T22:56:30Z`;
+instrumentadas en `Pixel_6_Pro`, Android 12: `2026-10-03T22:57:21`.
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+.\gradlew.bat :app:connectedDebugAndroidTest
+```
+
+Pruebas nuevas: `DocumentRevisionTest` (2), `EditorDocumentsTest` (6),
+`EditorDocumentsIntegrationTest` (2 instrumentadas) y restauración de ambos ejes
+del viewport en `StructaEditorViewTest` (1 instrumentada adicional). Cubren revisiones
+guardadas, historial divergente, sesiones independientes, composición al cambiar,
+guardar/cerrar/reabrir, errores, cancelación/descarte y edición durante el guardado.
+Las pruebas de pantalla pulsan las pestañas y los botones del diálogo real de cierre;
+usan puertos de lectura/escritura en memoria, no una matriz de proveedores SAF.
+
+Alcance: las pestañas y su estado viven en el ViewModel durante la sesión de la app.
+La restauración después de morir el proceso y la metadata persistida del workspace
+corresponden a la fase 9; recuperación de borradores y vistas simultáneas del mismo
+documento mantienen su planificación posterior. Continúa el límite de edición
+interactiva de 1 MB. El indicador dirty identifica la revisión guardada, no equivalencia
+textual entre ediciones independientes que casualmente produzcan el mismo contenido.
 
 Implementar:
 
@@ -1999,6 +2156,64 @@ tabs
 
 ## Fase 9 — Workspace
 
+### Estado: completada
+
+Validación final: 2026-10-04 (timestamps UTC de los informes).
+
+- [x] `FileSystem` neutral al proveedor, integrado con los puertos existentes
+  `FileReader`, `FileWriter` y `DirectoryReader`. Ofrece lectura/escritura de texto,
+  listado, metadata (`stat`), creación de archivo/carpeta, renombrado y eliminación.
+  `FileRef` identifica documento y filesystem sin exigir una ruta física.
+- [x] `SafFileSystem` coordina los adaptadores SAF existentes y las operaciones de
+  `DocumentsContract` en IO. Renombrar devuelve la nueva referencia del proveedor,
+  porque la URI puede cambiar. El editor continúa usando puertos neutrales.
+- [x] Browser permite elegir workspace, navegar, expandir/contraer carpetas con
+  carga diferida, crear archivos/carpetas, renombrar, eliminar con confirmación y
+  actualizar. Las respuestas de expansiones antiguas se descartan al navegar.
+- [x] `Workspace` contiene id, raíz (`FileRef` con proveedor) y documentos abiertos.
+  La raíz actual se conserva con `SettingsRepository.lastFolder`; cambiar de raíz
+  mantiene las pestañas abiertas. Hay un workspace raíz actual, no un catálogo de
+  sesiones independientes por workspace.
+- [x] Metadata de pestañas ordenadas, pestaña activa, selección/cursor y ambos ejes
+  de scroll mediante `SessionRepository` y SharedPreferences. Checkpoints con
+  debounce de 300 ms, más checkpoint al pasar la Activity a segundo plano.
+- [x] Restauración en un ViewModel nuevo: consulta metadata actual del archivo,
+  relee contenido, reconstruye sesiones y ajusta selección al tamaño disponible.
+  Archivos ausentes/inaccesibles se omiten con aviso; se restauran los restantes.
+  Metadata corrupta se interpreta como sesión vacía.
+- [x] Permisos persistentes SAF, con intento de conservar solo lectura si el
+  proveedor no admite persistir lectura/escritura conjuntamente.
+
+**Política de operaciones sobre documentos abiertos:** renombrar/eliminar un archivo
+abierto exige cerrar antes su pestaña, utilizando el flujo Guardar/Descartar existente.
+Para renombrar/eliminar una carpeta se exige cerrar todas las pestañas, pues un id
+opaco no permite deducir por prefijo qué documentos son descendientes. No se remapean
+historiales vivos a nuevas URI. Errores de operaciones se muestran en el explorador.
+
+**Verificación:** 112 JVM y 22 instrumentadas, cero fallos/errores/omisiones, APK de
+aplicación y pruebas compilados. `WorkspaceTest` añade 5 JVM; `SessionPersistenceTest`
+añade 2 instrumentadas; `SafFileSystemTest` añade 1 instrumentada con llamadas reales
+de ContentResolver a un DocumentsProvider aislado del APK de pruebas. Esta última
+comprueba creación anidada, escritura con truncado, listado, cambio de URI al renombrar
+y eliminación. El proveedor y receptor de permisos de prueba están en Java porque se
+ejecutan en el proceso del APK de pruebas, sin el runtime Kotlin de la aplicación.
+
+Comando final, **BUILD SUCCESSFUL en 34 s**:
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:connectedDebugAndroidTest
+```
+
+XML JVM: alrededor de `2026-10-04T04:06:19Z`; instrumentadas en Pixel_6_Pro Android 12:
+`2026-10-04T04:06:45`. `git diff --check` sin errores.
+
+**Alcance de restauración:** se recupera metadata, no texto no guardado, composición,
+historial Undo/Redo ni búsqueda/modo de la sesión anterior. El contenido se toma del
+archivo y arranca limpio. Crash Recovery sigue planificado aparte. Las pruebas no
+certifican una matriz de proveedores comerciales ni la UI del selector del sistema.
+Siguiente fase: 10 — Productivity.
+
 Implementar:
 
 ```text
@@ -2013,6 +2228,73 @@ session restore
 
 ## Fase 10 — Productivity
 
+### Estado: completada
+
+Cierre verificado el 2026-10-04.
+
+- [x] `domain/editor/search/DocumentSearch`: búsqueda literal o regex, mayúsculas,
+  palabra completa Unicode y offsets UTF-16. Admite espacios como consulta,
+  coincidencias de longitud cero y errores de patrón/referencias de grupo.
+- [x] Búsqueda sobre snapshots inmutables en `Dispatchers.Default`, debounce de
+  120 ms y cancelación por documento al cambiar texto, consulta u opciones.
+  Siguiente/anterior seleccionan la coincidencia y recorren circularmente los
+  resultados; el Canvas revela la selección mediante la sesión de input existente.
+- [x] Reemplazar actual y todo, con expansión regex `$0`, `$1`… y `${name}`.
+  Si no hay una coincidencia seleccionada, Reemplazar actual selecciona la siguiente
+  antes de editar. Los reemplazos literales no interpretan referencias de grupo.
+- [x] `ReplaceMatchesCommand` valida el lote antes de mutar y aplica rangos en orden
+  inverso dentro de una transacción: un Undo restaura texto y selección. Se confirma
+  composición IME antes de reemplazar y se rechazan planes obsoletos tras edición,
+  cambio de pestaña, consulta, opciones, reemplazo o selección de coincidencia actual.
+- [x] Ir a línea integrado en botones, paleta y Ctrl/Meta+G; entrada positiva válida,
+  Enter para aceptar y Escape para cancelar. Las líneas fuera de rango superior
+  conservan el comportamiento existente de ir al final del documento.
+- [x] Quick Open (`Ctrl/Meta+P`) indexa únicamente nombres/rutas relativas desde la
+  raíz del workspace al abrir el diálogo. Recorrido en IO, filtrado fuzzy en Default,
+  resultados progresivos, ids deduplicados y protección ante ciclos/respuestas de
+  raíces antiguas. Cerrar cancela; reabrir reconstruye metadata actual.
+- [x] Command Palette (`Ctrl/Meta+Shift+P`) comparte el registro `EditorAction` y el
+  despachador con toolbar/atajos. Ofrece las acciones disponibles: guardar, cerrar,
+  buscar/reemplazar, siguiente/anterior, ir a línea, Quick Open, Undo/Redo y formatear.
+  Las operaciones de edición continúan llegando al Command System del engine.
+- [x] Selectores con filtro, flechas, Enter, Escape y selección táctil. Foco inicial
+  solicitado dentro del diálogo después de su primer frame. F3/Shift+F3 y
+  Enter/Shift+Enter en búsqueda navegan coincidencias.
+- [x] Find e ir a línea también funcionan en documentos de solo lectura; reemplazo
+  respeta el límite de edición existente de 1 MB y valida el tamaño del resultado.
+
+**Límites explícitos:** consultas de hasta 4096 caracteres y hasta 10 000 coincidencias;
+la UI indica truncado y exige acotar antes de reemplazar resultados truncados. Regex
+usa `java.util.regex` con presupuesto cooperativo de 500 ms: se comprueba entre
+coincidencias y accesos al CharSequence. No es un timeout duro del motor nativo Android;
+la prueba de regex patológica corresponde al motor JVM. El análisis se realiza fuera
+del hilo UI. Quick Open limita el índice a 20 000 archivos / 5 000 carpetas y muestra
+hasta 100 resultados; comunica índices parciales y carpetas inaccesibles. No lee el
+contenido de los archivos para indexar. Workspace Search, Save All, word wrap y cambios
+de encoding/lenguaje de los ejemplos de paleta no se añaden en esta fase.
+
+**Verificación:** 129 JVM y 25 instrumentadas aprobadas, sin fallos, errores ni omisiones;
+APK de app y pruebas compilados. Nuevas pruebas: 7 `DocumentSearchTest`, 6
+`ProductivityTest`, 4 `QuickOpenTest` y 3 `ProductivityIntegrationTest`. Cubren rangos,
+regex/grupos, lotes inválidos sin edición parcial, Undo, read-only, resultados obsoletos,
+recorrido fuzzy, cambios de raíz, flujos Compose y atajos. Se amplió la prueba de input
+con F3/Shift+F3 y se adaptaron las pruebas previas al resultado de búsqueda asíncrono.
+
+La suite instrumentada completa pasó en Pixel_6_Pro Android 12, XML
+`2026-10-04T16:08:41`. En esa ejecución conjunta falló una JVM por un trabajo simulado
+no esperado al finalizar la prueba; se corrigió su lifecycle y la suite JVM completa
+pasó después (XML `2026-10-04T16:09:25Z`–`16:09:26Z`). Último comando: **BUILD SUCCESSFUL
+en 3 s**:
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+```
+
+La validación instrumentada se ejecutó con `:app:connectedDebugAndroidTest` en la
+invocación conjunta anterior. No hubo cambios de producción ni instrumentadas tras
+esa ejecución. `git diff --check` sin errores. Siguiente fase: **11 — Syntax**.
+
 Implementar:
 
 ```text
@@ -2026,6 +2308,69 @@ command palette
 ---
 
 ## Fase 11 — Syntax
+
+### Estado: completada
+
+Cierre verificado el 2026-10-04.
+
+- [x] `domain/editor/syntax/LanguageRegistry`: detección por extensión sin distinguir
+  mayúsculas de Kotlin (`kt/kts`), Java, Go, JSON (`json/jsonl`), YAML (`yaml/yml`) y
+  Markdown (`md/markdown`). Extensiones desconocidas → texto plano. El renderer
+  recibe spans; no interpreta nombres de archivo. La barra informa el lenguaje.
+- [x] `LanguageTokenizer`, `TokenizerState`, `TokenizationResult`, `SyntaxSpan` y
+  `SyntaxStyle`: contratos Kotlin puros, spans ordenados por línea en offsets UTF-16,
+  estados de comentarios/cadenas/fences multilínea. Tokenizadores léxicos propios
+  deterministas, con comprobaciones de cancelación también dentro de tokens largos.
+- [x] Palabras clave, cadenas, números, comentarios, operadores y claves JSON/YAML.
+  Comentarios anidados Kotlin, cadenas raw Kotlin/Java/Go; Markdown resalta encabezados,
+  citas y bloques cercados, conservando tipo y longitud del delimitador de apertura.
+- [x] `IncrementalHighlighter`: conserva prefijo común; retokeniza desde la primera
+  línea modificada y reutiliza el sufijo cuando coincide el estado de entrada.
+  Inserción/eliminación de líneas ajusta la correspondencia del sufijo. Los snapshots
+  son independientes; cancelar un cálculo no modifica el último cache publicado.
+- [x] `StructaEditorView` analiza snapshots en `Dispatchers.Default`; cancela/invalida
+  trabajos al editar, cambiar engine/lenguaje o desmontar la View. Una generación y
+  la identidad del engine impiden publicar resultados de otro documento. Durante el
+  cálculo se muestra texto sin spans antiguos. `EditorViewState` conserva el cache
+  por pestaña en memoria; no se persiste ni participa en historial/dirty.
+- [x] `TextRenderer` aplica colores por runs sobre el layout monoespaciado existente,
+  con clipping horizontal, columnas de tab y gutter fijo. Paletas clara/oscura sin
+  cambiar fuente, peso ni geometría. Cursores, selección y composición se conservan.
+- [x] `domain/editor/decoration/DecorationSet`: índice independiente del buffer para
+  rangos superpuestos, con tipos de sintaxis, error, warning, coincidencia de búsqueda,
+  ocurrencia seleccionada, Git, brackets y breakpoints. La búsqueda alimenta fondos
+  visibles; el renderer admite subrayados de diagnóstico y fondo de bracket. Git,
+  breakpoints y productores LSP quedan reservados. La sintaxis usa spans por línea.
+
+**Alcance y límites:** resaltado léxico inicial, sin análisis semántico ni validación
+de gramáticas completas. Interpolaciones dentro de cadenas, escapes Unicode previos
+al lexer Java, escalares de bloque/estructuras complejas YAML y Markdown inline o
+lenguajes embebidos en fences no tienen análisis específico. Los marcadores de error
+no se generan automáticamente: la capa está preparada para futuros productores.
+
+El límite de resaltado es **1 048 576 unidades UTF-16**, independiente del límite de
+edición por tamaño del archivo; al superarlo se usa texto plano y la UI lo indica.
+La captura del texto se realiza en el hilo propietario del buffer. La comparación y
+división del snapshot en líneas aún recorren el documento en el worker: lo incremental
+es la tokenización y reutilización de resultados, no un índice de deltas del buffer.
+Los caches solo viven en memoria. Los archivos desconocidos no se tokenizan.
+
+**Verificación:** **137 JVM y 28 instrumentadas**, cero fallos/errores/omisiones;
+APK de app y pruebas compilados. Nuevas: 8 `SyntaxTest` y 3 `SyntaxIntegrationTest`.
+Cubren rangos UTF-16, estados multilínea, convergencia, reuso ante inserción/eliminación,
+250 ediciones aleatorias comparadas con análisis completo, cancelación/límites,
+decoraciones superpuestas, edición/Undo/cambio de documento, un worker antiguo lento
+y colores reales del Canvas después de tabs, fondos de búsqueda y subrayados.
+
+Suite completa en Pixel_6_Pro Android 12; XML JVM `2026-10-04T16:26:13Z`–`16:26:14Z`,
+Android `2026-10-04T16:27:00`. **BUILD SUCCESSFUL en 50 s**:
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:connectedDebugAndroidTest
+```
+
+`git diff --check` sin errores. Siguiente fase: **12 — IDE Features**.
 
 Implementar:
 
@@ -2103,6 +2448,12 @@ line index correcto
 ---
 
 # 60. Segundo milestone obligatorio
+
+**Estado: implementado y verificado al cerrar la fase 7 (2026-10-03).**
+`StructaEditorViewTest` cubre Canvas, gutter, cursor, selección y scroll;
+`EditorInputIntegrationTest` cubre toque, escritura, Backspace, Enter, Undo/Redo
+y el puente IME sobre la View adjunta. Resultado global: 99 JVM y 16 instrumentadas
+aprobadas. Véanse el alcance y los límites de validación de teclados en la fase 7.
 
 Crear `StructaEditorView`.
 

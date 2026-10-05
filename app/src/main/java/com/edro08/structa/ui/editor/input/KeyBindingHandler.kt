@@ -4,7 +4,28 @@ import android.view.KeyEvent
 import com.edro08.structa.domain.editor.command.*
 import com.edro08.structa.domain.editor.cursor.TextOffset
 
-enum class EditorAction { SAVE, FIND, REPLACE, GO_TO_LINE, QUICK_OPEN, COMMAND_PALETTE }
+/** Shared application command registry: palette, toolbar and keyboard dispatch these same intents. */
+enum class EditorAction(val title: String, val shortcut: String = "") {
+    SAVE("Guardar", "Ctrl+S"), FIND("Buscar", "Ctrl+F"), REPLACE("Reemplazar", "Ctrl+H"),
+    GO_TO_LINE("Ir a línea", "Ctrl+G"), QUICK_OPEN("Abrir", "Ctrl+P"),
+    COMMAND_PALETTE("Command Palette", "Ctrl+Shift+P"), FIND_NEXT("Buscar siguiente", "F3"),
+    FIND_PREVIOUS("Buscar anterior", "Shift+F3"), UNDO("Deshacer", "Ctrl+Z"),
+    REDO("Rehacer", "Ctrl+Shift+Z"), FORMAT("Formatear"), CLOSE("Cerrar archivo")
+}
+
+fun applicationActionFor(event: KeyEvent): EditorAction? {
+    if (event.action != KeyEvent.ACTION_DOWN || event.isAltPressed) return null
+    if (event.keyCode == KeyEvent.KEYCODE_F3) return if (event.isShiftPressed) EditorAction.FIND_PREVIOUS else EditorAction.FIND_NEXT
+    if (!event.isCtrlPressed && !event.isMetaPressed) return null
+    return when (event.keyCode) {
+        KeyEvent.KEYCODE_S -> EditorAction.SAVE
+        KeyEvent.KEYCODE_F -> EditorAction.FIND
+        KeyEvent.KEYCODE_H -> EditorAction.REPLACE
+        KeyEvent.KEYCODE_G -> EditorAction.GO_TO_LINE
+        KeyEvent.KEYCODE_P -> if (event.isShiftPressed) EditorAction.COMMAND_PALETTE else EditorAction.QUICK_OPEN
+        else -> null
+    }
+}
 
 class KeyBindingHandler(
     private val input: EditorInputSession,
@@ -13,6 +34,7 @@ class KeyBindingHandler(
 ) {
     fun handle(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return false
+        applicationActionFor(event)?.let { action(it); return true }
         if ((event.isCtrlPressed || event.isMetaPressed) && !event.isAltPressed) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_Z -> input.execute(if (event.isShiftPressed) RedoCommand else UndoCommand)
@@ -21,11 +43,6 @@ class KeyBindingHandler(
                 KeyEvent.KEYCODE_C -> clipboardAction(android.R.id.copy)
                 KeyEvent.KEYCODE_X -> clipboardAction(android.R.id.cut)
                 KeyEvent.KEYCODE_V -> clipboardAction(android.R.id.paste)
-                KeyEvent.KEYCODE_S -> action(EditorAction.SAVE)
-                KeyEvent.KEYCODE_F -> action(EditorAction.FIND)
-                KeyEvent.KEYCODE_H -> action(EditorAction.REPLACE)
-                KeyEvent.KEYCODE_G -> action(EditorAction.GO_TO_LINE)
-                KeyEvent.KEYCODE_P -> action(if (event.isShiftPressed) EditorAction.COMMAND_PALETTE else EditorAction.QUICK_OPEN)
                 KeyEvent.KEYCODE_MOVE_HOME -> input.execute(MoveCursorCommand(TextOffset(0), event.isShiftPressed), false)
                 KeyEvent.KEYCODE_MOVE_END -> input.execute(MoveCursorCommand(TextOffset(input.buffer.length), event.isShiftPressed), false)
                 else -> return false

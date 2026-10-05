@@ -45,7 +45,7 @@ class EditorInputConnection(
 
     override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText? {
         if (closed) return null
-        // Bounded context; fullscreen extract mode is disabled by EditorInfo.
+        // The complete selection plus bounded surrounding context. Fullscreen mode is disabled.
         val start = (input.selectionStart - 2048).coerceAtLeast(0)
         val end = (input.selectionEnd.toLong() + 2048).coerceAtMost(input.buffer.length.toLong()).toInt()
         return ExtractedText().apply {

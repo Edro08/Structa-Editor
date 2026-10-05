@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.edro08.structa.application.browser.ListDirectory
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileEntry
+import com.edro08.structa.domain.filesystem.FileSystem
+import com.edro08.structa.domain.filesystem.FileRef
+import com.edro08.structa.domain.workspace.Workspace
 import com.edro08.structa.domain.settings.SettingsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -18,40 +21,69 @@ data class BrowserUiState(
     val query: String = "",
     val entries: List<FileEntry> = emptyList(),
     val loading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val workspace: Workspace? = null,
+    val expanded: Set<DocumentId> = emptySet(),
+    val children: Map<DocumentId, List<FileEntry>> = emptyMap(),
+    val busy: Boolean = false,
+    val breadcrumbs: List<String> = emptyList()
 )
 
 class BrowserViewModel(
     private val listDirectory: ListDirectory,
-    private val settings: SettingsRepository
+    private val settings: SettingsRepository,
+    private val fileSystem: FileSystem? = null
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(BrowserUiState())
     val state = mutableState.asStateFlow()
     private var entries = emptyList<FileEntry>()
     private var titles = listOf("Explorador")
+    private var rootName: String? = null
+    private var rootSelection = 0L
     private var request = 0L
     private var job: Job? = null
+    private var treeGeneration = 0L
+    private val expanding = mutableSetOf<DocumentId>()
 
     init { settings.lastFolder()?.let { selectFolder(it, persist = false) } }
 
     fun selectFolder(id: DocumentId, persist: Boolean = true) {
         if (persist) settings.setLastFolder(id)
         titles = listOf("Explorador")
-        mutableState.value = BrowserUiState(stack = listOf(id))
+        rootName = null
+        val selected = ++rootSelection
+        treeGeneration++
+        expanding.clear()
+        mutableState.value = BrowserUiState(stack = listOf(id), workspace = Workspace(id.value,
+            FileRef(id, fileSystem?.key ?: "saf"), state.value.workspace?.openDocuments.orEmpty()))
         load()
+        fileSystem?.let { fs ->
+            viewModelScope.launch {
+                try {
+                    val name = fs.stat(id).name
+                    if (selected == rootSelection) {
+                        rootName = name
+                        mutableState.value = state.value.copy(breadcrumbs = listOf(name) + titles.drop(1))
+                    }
+                } catch (exception: CancellationException) { throw exception
+                } catch (_: Exception) { /* The folder listing reports inaccessible roots. */ }
+            }
+        }
     }
 
     fun enter(entry: FileEntry) {
         if (!entry.isDirectory) return
         titles = titles + entry.name
-        mutableState.value = state.value.copy(stack = state.value.stack + entry.id, title = entry.name)
+        mutableState.value = state.value.copy(stack = state.value.stack + entry.id, title = entry.name,
+            breadcrumbs = listOfNotNull(rootName) + titles.drop(1))
         load()
     }
 
     fun back(): Boolean {
         if (state.value.stack.size <= 1) return false
         titles = titles.dropLast(1)
-        mutableState.value = state.value.copy(stack = state.value.stack.dropLast(1), title = titles.last())
+        mutableState.value = state.value.copy(stack = state.value.stack.dropLast(1), title = titles.last(),
+            breadcrumbs = listOfNotNull(rootName) + titles.drop(1))
         load()
         return true
     }
@@ -61,14 +93,75 @@ class BrowserViewModel(
     }
 
     fun refresh() = load()
+    fun setOpenDocuments(ids: List<DocumentId>) {
+        mutableState.value = state.value.copy(workspace = state.value.workspace?.copy(openDocuments = ids))
+    }
+
+    fun toggleFolder(entry: FileEntry) {
+        if (!entry.isDirectory) return
+        if (entry.id in state.value.expanded) {
+            mutableState.value = state.value.copy(expanded = state.value.expanded - entry.id)
+            return
+        }
+        if (!expanding.add(entry.id)) return
+        val token = treeGeneration
+        viewModelScope.launch {
+            try {
+                val children = listDirectory(entry.id)
+                if (token == treeGeneration) mutableState.value = state.value.copy(
+                    expanded = state.value.expanded + entry.id, children = state.value.children + (entry.id to children))
+            } catch (exception: CancellationException) { throw exception
+            } catch (exception: Exception) {
+                if (token == treeGeneration) mutableState.value = state.value.copy(error = exception.message)
+            } finally { if (token == treeGeneration) expanding.remove(entry.id) }
+        }
+    }
+
+    fun create(name: String, directory: Boolean) {
+        val parent = state.value.stack.lastOrNull() ?: return
+        mutate { it.create(parent, name.trim(), directory) }
+    }
+
+    fun rename(entry: FileEntry, name: String) {
+        if (protectOpenDocument(entry)) return
+        mutate { it.rename(entry.id, name.trim()) }
+    }
+
+    fun delete(entry: FileEntry) {
+        if (protectOpenDocument(entry)) return
+        mutate { it.delete(entry.id) }
+    }
+
+    private fun protectOpenDocument(entry: FileEntry): Boolean {
+        val opened = state.value.workspace?.openDocuments.orEmpty()
+        val protected = entry.id in opened || (entry.isDirectory && opened.isNotEmpty())
+        if (protected) mutableState.value = state.value.copy(error =
+            "Cierra las pestañas afectadas antes de modificar archivos; para carpetas, cierra todas las pestañas.")
+        return protected
+    }
+
+    private fun mutate(action: suspend (FileSystem) -> Unit) {
+        val fs = fileSystem ?: return
+        if (state.value.busy) return
+        mutableState.value = state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            try { action(fs); load()
+            } catch (exception: CancellationException) { throw exception
+            } catch (exception: Exception) { mutableState.value = state.value.copy(error = exception.message ?: "Operación fallida")
+            } finally { mutableState.value = state.value.copy(busy = false) }
+        }
+    }
     fun dismissError() { mutableState.value = state.value.copy(error = null) }
 
     private fun load() {
         val id = state.value.stack.lastOrNull() ?: return
         val token = ++request
+        treeGeneration++
+        expanding.clear()
         job?.cancel()
         entries = emptyList()
-        mutableState.value = state.value.copy(entries = emptyList(), loading = true, error = null)
+        mutableState.value = state.value.copy(entries = emptyList(), loading = true, error = null,
+            expanded = emptySet(), children = emptyMap())
         job = viewModelScope.launch {
             try {
                 val result = listDirectory(id)

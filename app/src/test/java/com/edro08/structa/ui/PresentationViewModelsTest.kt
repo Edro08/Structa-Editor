@@ -14,6 +14,7 @@ import com.edro08.structa.domain.filesystem.DirectoryReader
 import com.edro08.structa.domain.filesystem.FileReader
 import com.edro08.structa.domain.filesystem.FileWriter
 import com.edro08.structa.domain.settings.SettingsRepository
+import com.edro08.structa.domain.settings.EditorFont
 import com.edro08.structa.ui.screen.browser.BrowserViewModel
 import com.edro08.structa.ui.screen.editor.EditorViewModel
 import com.edro08.structa.ui.screen.home.HomeViewModel
@@ -39,8 +40,17 @@ class PresentationViewModelsTest {
     }
     private val settings = object : SettingsRepository {
         var folder: DocumentId? = null
+        var dark = true
+        var font = EditorFont.MONOSPACE
+        var size = 14
         override fun lastFolder() = folder
         override fun setLastFolder(folder: DocumentId) { this.folder = folder }
+        override fun darkTheme() = dark
+        override fun setDarkTheme(dark: Boolean) { this.dark = dark }
+        override fun editorFont() = font
+        override fun setEditorFont(font: EditorFont) { this.font = font }
+        override fun editorFontSize() = size
+        override fun setEditorFontSize(size: Int) { this.size = size }
     }
     private val reader = object : FileReader {
         override suspend fun read(file: FileEntry) = "uno\ndos uno"
@@ -59,6 +69,7 @@ class PresentationViewModelsTest {
         model.setMode(FileMode.YAML)
         model.edit(TextFieldValue("uno\nuno\ntres", TextRange(4)))
         model.setSearch("UNO")
+        model.state.first { !it.searching }
         assertEquals(2, model.state.value.occurrences)
         assertEquals("1\n2\n3", model.state.value.lineNumbers)
         assertEquals(TextRange(4), model.state.value.value.selection)
@@ -71,6 +82,7 @@ class PresentationViewModelsTest {
         assertEquals(FileMode.YAML, model.state.value.mode)
         model.goToLine(999)
         assertEquals(TextRange(12), model.state.value.value.selection)
+        model.state.first { !it.searching }
     }
 
     @Test fun formattingUpdatesDerivedStateAndCanBeUndone() = runTest(dispatcher) {
@@ -79,12 +91,13 @@ class PresentationViewModelsTest {
         model.state.first { it.entry != null && !it.loading }
         model.setSearch("formatted")
         model.format()
-        model.state.first { it.value.text == "formatted" && !it.formatting }
+        model.state.first { it.value.text == "formatted" && !it.formatting && !it.searching }
         assertEquals(1, model.state.value.occurrences)
         assertEquals("1", model.state.value.lineNumbers)
         model.undo()
         assertEquals("uno\ndos uno", model.state.value.value.text)
         assertEquals(0, model.state.value.occurrences)
+        model.state.first { !it.searching }
     }
 
     @Test fun imeAndToolbarShareOneOperationHistoryAndSaveCommittedComposition() = runTest(dispatcher) {
@@ -257,9 +270,24 @@ class PresentationViewModelsTest {
     }
 
     @Test fun shizukuSelectionIsOnlyPresentationState() {
-        val model = SettingsViewModel()
+        val model = SettingsViewModel(settings)
         model.selectProvider("Shizuku")
         assertEquals("Shizuku", model.state.value.provider)
         assertNull(settings.lastFolder())
+    }
+
+    @Test fun appearancePreferencesSurviveSettingsViewModelRecreation() {
+        val model = SettingsViewModel(settings)
+        assertTrue(model.state.value.darkTheme)
+        assertEquals(14, model.state.value.editorFontSize)
+        model.selectTheme(false)
+        model.selectFont(EditorFont.SANS_MONOSPACE)
+        model.selectFontSize(20)
+        model.selectFontSize(100)
+        val restored = SettingsViewModel(settings).state.value
+        assertFalse(restored.darkTheme)
+        assertEquals(EditorFont.SANS_MONOSPACE, restored.editorFont)
+        assertEquals(20, restored.editorFontSize)
+        assertEquals("SAF", restored.provider)
     }
 }

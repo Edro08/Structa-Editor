@@ -17,6 +17,15 @@ class EditorDocument(
     val id: DocumentId = DocumentId(UUID.randomUUID().toString())
 ) {
     val history: EditHistory = EditHistory(buffer)
+    val revision: Long get() = history.revision
+    var savedRevision: Long = revision
+        private set
+    val dirty: Boolean get() = revision != savedRevision
+
+    /** Call only after successful persistence of this exact revision, possibly asynchronously. */
+    fun markSaved(revision: Long = this.revision) {
+        savedRevision = revision
+    }
     private var hasEditor = false
 
     internal fun createEditingSession(): EditingSession {

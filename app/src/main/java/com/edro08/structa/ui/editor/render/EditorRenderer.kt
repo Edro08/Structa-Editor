@@ -8,6 +8,8 @@ import com.edro08.structa.domain.editor.buffer.TextBuffer
 import com.edro08.structa.domain.editor.cursor.TextRange
 import com.edro08.structa.ui.editor.model.EditorLine
 import com.edro08.structa.ui.editor.model.EditorViewport
+import com.edro08.structa.domain.editor.syntax.SyntaxSnapshot
+import com.edro08.structa.domain.editor.decoration.*
 
 /** Read-only renderer; retains layouts only for the viewport plus two lines of margin. */
 class EditorRenderer(private val density: Float, private val textSizeToPixels: (Float) -> Float) {
@@ -26,6 +28,7 @@ class EditorRenderer(private val density: Float, private val textSizeToPixels: (
     }
 
     fun metrics(lineCount: Int, style: EditorStyle): EditorMetrics {
+        textPaint.typeface = Typeface.create(style.font.family, Typeface.NORMAL)
         textPaint.textSize = textSizeToPixels(style.textSizeSp)
         val font = textPaint.fontMetrics
         val characterWidth = textPaint.measureText("M").coerceAtLeast(1f)
@@ -54,7 +57,7 @@ class EditorRenderer(private val density: Float, private val textSizeToPixels: (
 
     fun draw(canvas: Canvas, engine: EditorEngine, lines: List<EditorLine>, viewport: EditorViewport,
         metrics: EditorMetrics, width: Float, height: Float, style: EditorStyle, showCursor: Boolean,
-        composing: TextRange? = null) {
+        composing: TextRange? = null, syntax: SyntaxSnapshot? = null, decorations: DecorationSet = DecorationSet()) {
         canvas.drawColor(style.background)
         val currentLine = engine.document.buffer.getLineForOffset(engine.cursor.offset.value)
         val saved = canvas.save()
@@ -66,13 +69,32 @@ class EditorRenderer(private val density: Float, private val textSizeToPixels: (
         }
         for (line in lines) {
             val top = line.number * metrics.lineHeight - viewport.scrollY
+            for (decoration in decorations.intersecting(line.startOffset, line.startOffset + line.length + 1)) {
+                val columns = line.selectionColumns(decoration.range.start.value, decoration.range.end.value,
+                    line.number < engine.document.buffer.lineCount - 1)
+                val from = columns?.first ?: line.columnAt(decoration.range.start.value - line.startOffset)
+                val to = columns?.let { it.last + 1 } ?: from + 1
+                val underline = decoration.type == DecorationType.ERROR || decoration.type == DecorationType.WARNING
+                backgroundPaint.color = when (decoration.type) {
+                    DecorationType.SEARCH_MATCH -> style.searchMatch
+                    DecorationType.SELECTED_OCCURRENCE -> style.selectedOccurrence
+                    DecorationType.ERROR -> style.error
+                    DecorationType.WARNING -> style.warning
+                    DecorationType.BRACKET_MATCH -> style.selection
+                    else -> continue // Reserved layers have no producers yet.
+                }
+                canvas.drawRect(metrics.textX(from, viewport.scrollX),
+                    if (underline) top + metrics.lineHeight - 2 * density else top,
+                    metrics.textX(to, viewport.scrollX), top + metrics.lineHeight, backgroundPaint)
+            }
             selection.draw(canvas, line, engine.selection, line.number < engine.document.buffer.lineCount - 1,
                 metrics, viewport.scrollX, top, style.selection)
         }
         textPaint.color = style.foreground
         for (line in lines) {
             val top = line.number * metrics.lineHeight - viewport.scrollY
-            text.draw(canvas, line, textPaint, metrics, viewport.scrollX, top, width)
+            text.draw(canvas, line, textPaint, metrics, viewport.scrollX, top, width,
+                syntax?.lines?.getOrNull(line.number)?.result?.spans.orEmpty(), style)
             if (composing != null) {
                 val columns = line.selectionColumns(composing.start.value, composing.end.value,
                     line.number < engine.document.buffer.lineCount - 1)

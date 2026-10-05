@@ -27,8 +27,12 @@ import com.edro08.structa.domain.editor.cursor.TextOffset
 import com.edro08.structa.ui.editor.input.*
 import com.edro08.structa.ui.editor.model.EditorLine
 import com.edro08.structa.ui.editor.model.EditorViewport
+import com.edro08.structa.ui.editor.model.EditorViewState
 import com.edro08.structa.ui.editor.render.EditorRenderer
 import com.edro08.structa.ui.editor.render.EditorStyle
+import com.edro08.structa.domain.editor.syntax.*
+import com.edro08.structa.domain.editor.decoration.DecorationSet
+import kotlinx.coroutines.*
 
 /**
  * Canvas editor surface with command-based input and two-axis scrolling.
@@ -74,6 +78,7 @@ class StructaEditorView @JvmOverloads constructor(
             }
         }
     private val inputChanged: (Boolean) -> Unit = {
+        if (it) decorations = DecorationSet()
         refresh()
         revealCursor()
         resetBlink()
@@ -81,10 +86,20 @@ class StructaEditorView @JvmOverloads constructor(
         selectionMode?.invalidate()
     }
     private var contentVersion = 0L
+    private var viewState: EditorViewState? = null
     private var offsetX = 0f
     private var offsetY = 0f
     private var maxX = 0f
     private var maxY = 0f
+    private var syntaxScope: CoroutineScope? = null
+    private var syntaxJob: Job? = null
+    private var syntaxGeneration = 0L
+    private var requestedSyntaxText: String? = null
+    private var language: Language = LanguageRegistry.plain
+    var syntaxSnapshot: SyntaxSnapshot? = null
+        private set
+    var decorations: DecorationSet = DecorationSet()
+        set(value) { field = value; invalidate() }
 
     var viewport = EditorViewport(0, -1, 0f, 0f)
         private set
@@ -95,6 +110,8 @@ class StructaEditorView @JvmOverloads constructor(
             field = value
             scroller.forceFinished(true)
             refresh()
+            updateViewport()
+            if (editable && hasFocus()) revealCursor()
         }
 
     var cursorVisible: Boolean = true
@@ -149,11 +166,21 @@ class StructaEditorView @JvmOverloads constructor(
     }
 
     /** Same engine/version retains cached lines and scroll; another engine starts at the top. */
-    fun bind(editor: EditorEngine, version: Long = 0L, inputSession: EditorInputSession? = null) {
+    fun bind(editor: EditorEngine, version: Long = 0L, inputSession: EditorInputSession? = null,
+        savedViewState: EditorViewState? = null, language: Language = LanguageRegistry.plain) {
         require(inputSession == null || inputSession.engine === editor)
         val changed = engine !== editor
+        val viewChanged = viewState !== savedViewState
         val inputChanged = inputSession != null && input !== inputSession
-        if (!changed && !inputChanged && contentVersion == version) return
+        val languageChanged = this.language != language
+        if (!changed && !inputChanged && !viewChanged && !languageChanged && contentVersion == version) return
+        if (changed || viewChanged || languageChanged) {
+            syntaxJob?.cancel()
+            syntaxGeneration++
+            requestedSyntaxText = null
+            syntaxSnapshot = null
+        }
+        this.language = language
         if (changed || inputChanged) {
             connection?.closeConnection()
             connection = null
@@ -164,11 +191,12 @@ class StructaEditorView @JvmOverloads constructor(
             selectionMode?.finish()
         }
         engine = editor
+        viewState = savedViewState
         contentVersion = version
         scroller.forceFinished(true)
-        if (changed) {
-            offsetX = 0f
-            offsetY = 0f
+        if (changed || viewChanged) {
+            offsetX = savedViewState?.scrollX ?: 0f
+            offsetY = savedViewState?.scrollY ?: 0f
         }
         refresh()
         if ((changed || inputChanged) && editable && hasFocus()) {
@@ -179,8 +207,42 @@ class StructaEditorView @JvmOverloads constructor(
     /** Invalidates visible line layouts after commands. Does not recreate the document. */
     fun refresh() {
         renderer.invalidateContent()
+        scheduleSyntax()
         contentDescription = "Editor de código, ${engine?.document?.buffer?.lineCount ?: 0} líneas"
         invalidate()
+    }
+
+    private fun scheduleSyntax() {
+        val editor = engine ?: return
+        val scope = syntaxScope ?: return
+        val buffer = editor.document.buffer
+        if (language == LanguageRegistry.plain || buffer.length > IncrementalHighlighter.MAX_TEXT_LENGTH) {
+            syntaxJob?.cancel()
+            syntaxGeneration++
+            requestedSyntaxText = null
+            syntaxSnapshot = null
+            viewState?.syntax = null
+            return
+        }
+        val text = buffer.getText(0, buffer.length).toString()
+        if (requestedSyntaxText == text) return
+        requestedSyntaxText = text
+        syntaxJob?.cancel()
+        val token = ++syntaxGeneration
+        val previous = viewState?.syntax ?: syntaxSnapshot
+        syntaxSnapshot = previous?.takeIf { it.text == text && it.languageId == language.id }
+        if (syntaxSnapshot != null) return
+        val requestedLanguage = language
+        syntaxJob = scope.launch {
+            val result = withContext(Dispatchers.Default) {
+                IncrementalHighlighter.highlight(text, requestedLanguage, previous) { ensureActive() }
+            }
+            if (token == syntaxGeneration && engine === editor) {
+                syntaxSnapshot = result
+                viewState?.syntax = result
+                invalidate()
+            }
+        }
     }
 
     fun scrollToPosition(x: Float, y: Float) {
@@ -201,26 +263,43 @@ class StructaEditorView @JvmOverloads constructor(
         offsetX = x.coerceIn(0f, maxX)
         offsetY = requested.scrollY
         viewport = requested.copy(scrollX = offsetX)
+        viewState?.let {
+            it.cursor = engine!!.cursor
+            it.selection = engine!!.selection
+            it.scrollX = offsetX
+            it.scrollY = offsetY
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val editor = engine
-        if (editor == null) {
-            canvas.drawColor(style.background)
-            return
+        // AndroidView's canvas may include Compose siblings. In particular,
+        // drawColor fills the entire clip, not just this View's local bounds.
+        val saved = canvas.save()
+        try {
+            canvas.clipRect(0, 0, width, height)
+            val editor = engine
+            if (editor == null) {
+                canvas.drawColor(style.background)
+                return
+            }
+            updateViewport()
+            val metrics = renderer.metrics(editor.document.buffer.lineCount, style)
+            renderer.draw(canvas, editor, renderer.prepare(editor.document.buffer, viewport), viewport,
+                metrics, width.toFloat(), height.toFloat(), style,
+                cursorVisible && (!editable || !hasFocus() || blinkVisible), input?.composition,
+                syntaxSnapshot, decorations)
+        } finally {
+            canvas.restoreToCount(saved)
         }
-        updateViewport()
-        val metrics = renderer.metrics(editor.document.buffer.lineCount, style)
-        renderer.draw(canvas, editor, renderer.prepare(editor.document.buffer, viewport), viewport,
-            metrics, width.toFloat(), height.toFloat(), style,
-            cursorVisible && (!editable || !hasFocus() || blinkVisible), input?.composition)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         scroller.forceFinished(true)
         updateViewport()
+        // In particular, keep the active insertion position above the newly opened IME.
+        if (editable && hasFocus() && h < oldh) revealCursor()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -275,6 +354,10 @@ class StructaEditorView @JvmOverloads constructor(
     override fun computeHorizontalScrollExtent(): Int = width
 
     override fun onDetachedFromWindow() {
+        syntaxScope?.cancel()
+        syntaxScope = null
+        requestedSyntaxText = null
+        syntaxGeneration++
         scroller.forceFinished(true)
         removeCallbacks(blink)
         connection?.closeConnection()
@@ -286,6 +369,8 @@ class StructaEditorView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        syntaxScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        scheduleSyntax()
         input?.addListener(inputChanged)
         resetBlink()
     }

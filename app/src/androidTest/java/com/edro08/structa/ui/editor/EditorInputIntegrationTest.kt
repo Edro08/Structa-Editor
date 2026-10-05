@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
+import androidx.test.espresso.matcher.ViewMatchers.withText
 import com.edro08.structa.domain.editor.EditorEngine
 import com.edro08.structa.domain.editor.buffer.PieceTableBuffer
 import com.edro08.structa.domain.editor.command.*
@@ -166,7 +170,11 @@ class EditorInputIntegrationTest {
                 assertTrue(key(code, KeyEvent.META_CTRL_ON))
             }
             key(KeyEvent.KEYCODE_P, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
-            assertEquals(EditorAction.entries.toList(), actions)
+            key(KeyEvent.KEYCODE_F3)
+            key(KeyEvent.KEYCODE_F3, KeyEvent.META_SHIFT_ON)
+            assertEquals(listOf(EditorAction.SAVE, EditorAction.FIND, EditorAction.REPLACE,
+                EditorAction.GO_TO_LINE, EditorAction.QUICK_OPEN, EditorAction.COMMAND_PALETTE,
+                EditorAction.FIND_NEXT, EditorAction.FIND_PREVIOUS), actions)
             assertEquals("abc", text())
             assertFalse(input.canUndo)
         }
@@ -208,6 +216,70 @@ class EditorInputIntegrationTest {
             var visible = false
             compose.runOnIdle { visible = view.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true }
             visible
+        }
+    }
+
+    @Test
+    fun shrinkingFocusedViewportKeepsCaretVisible() {
+        launch("line\n".repeat(200))
+        compose.runOnIdle {
+            input.setSelection(input.buffer.length, input.buffer.length)
+            val previousScroll = view.viewport.scrollY
+            assertTrue(previousScroll > 0f)
+            val originalHeight = view.height
+            view.layout(view.left, view.top, view.right, view.top + originalHeight / 2)
+            assertTrue("The cursor must follow the smaller viewport", view.viewport.scrollY > previousScroll)
+            // Hit testing at the bottom must still reach the line containing the caret.
+            assertEquals(input.buffer.length, view.offsetAt(1f, view.height - 1f))
+            assertEquals(input.buffer.length, input.active)
+            assertFalse(input.canUndo)
+        }
+    }
+
+    @Test
+    fun readOnlyTransitionCommitsCompositionAndRejectsStaleImeWrites() {
+        launch()
+        compose.runOnIdle {
+            val ime = connection()
+            ime.setComposingText("draft", 1)
+            view.editable = false
+            assertFalse(view.onCheckIsTextEditor())
+            assertNull(view.onCreateInputConnection(EditorInfo()))
+            assertFalse(ime.commitText("stale", 1))
+            assertFalse(view.performEditorContextAction(android.R.id.cut))
+            assertNull(input.composition)
+            assertFalse(input.engine.isInTransaction)
+            assertEquals("draft", text())
+            view.editable = true
+            view.requestFocus()
+            assertTrue(connection().commitText("!", 1))
+            assertEquals("draft!", text())
+        }
+    }
+
+    @Test
+    fun longPressSelectsWordAndContextMenuCopiesIt() {
+        launch("hello world")
+        val downTime = SystemClock.uptimeMillis()
+        compose.runOnIdle {
+            val event = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
+            try { view.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+        compose.waitUntil(timeoutMillis = 5_000) {
+            var selected = false
+            compose.runOnIdle { selected = input.selectedText() == "hello" }
+            selected
+        }
+        compose.runOnIdle {
+            val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, 1f, 1f, 0)
+            try { view.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+        onView(withText("Copiar")).inRoot(isPlatformPopup()).perform(click())
+        compose.runOnIdle {
+            val clipboard = view.context.getSystemService(ClipboardManager::class.java)
+            assertEquals("hello", clipboard.primaryClip!!.getItemAt(0).text.toString())
+            assertEquals("hello world", text())
+            assertFalse(input.canUndo)
         }
     }
 }
