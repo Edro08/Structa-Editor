@@ -6,8 +6,10 @@ import com.edro08.structa.application.document.*
 import com.edro08.structa.application.editor.*
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.editor.search.SearchOptions
+import com.edro08.structa.domain.editor.syntax.LanguageRegistry
 import com.edro08.structa.domain.filesystem.*
 import com.edro08.structa.ui.screen.editor.EditorViewModel
+import com.edro08.structa.ui.screen.editor.highlightLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -44,6 +46,83 @@ class ProductivityTest {
         model.findNext(true); assertEquals(TextRange(12, 15), model.state.value.value.selection)
         assertFalse(model.state.value.canUndo)
         model.goToLine(2); assertEquals(TextRange(12), model.state.value.value.selection)
+    }
+
+    @Test fun goToStartAndEndCollapseSelectionWithoutChangingTextOrHistory() = runTest(dispatcher) {
+        val text = "first\nemoji \uD83D\uDE80\nlast"
+        val model = model(text)
+        open(model)
+        model.state.value.inputSession!!.setSelection(2, 8)
+
+        model.goToEnd()
+        assertEquals(TextRange(text.length), model.state.value.value.selection)
+        model.goToStart()
+        assertEquals(TextRange(0), model.state.value.value.selection)
+        assertEquals(text, model.state.value.value.text)
+        assertFalse(model.state.value.dirty)
+        assertFalse(model.state.value.canUndo)
+    }
+
+    @Test fun selectedSyntaxLanguageOverridesFilenameAndSurvivesTabSwitches() = runTest(dispatcher) {
+        val model = model("{\"name\": true")
+        open(model)
+        assertEquals("text", model.state.value.highlightLanguage().id)
+        model.setMode(FileMode.JSON)
+        assertEquals("json", model.state.value.highlightLanguage().id)
+        val other = file.copy(id = DocumentId("b"), name = "other.go")
+        open(model, other)
+        assertEquals("go", model.state.value.highlightLanguage().id)
+        model.selectDocument(file.id)
+        assertEquals("json", model.state.value.highlightLanguage().id)
+        model.setLanguage(LanguageRegistry.forFileName("sample.xml"))
+        assertEquals("xml", model.state.value.highlightLanguage().id)
+        assertEquals(FileMode.TEXT, model.state.value.mode)
+        model.selectDocument(other.id)
+        model.setLanguage(LanguageRegistry.forFileName("main.md"))
+        assertEquals("markdown", model.state.value.highlightLanguage().id)
+        model.selectDocument(file.id)
+        assertEquals("xml", model.state.value.highlightLanguage().id)
+        model.selectDocument(other.id)
+        model.setMode(FileMode.TEXT)
+        assertEquals("text", model.state.value.highlightLanguage().id)
+        assertFalse(model.state.value.dirty)
+        assertFalse(model.state.value.canUndo)
+    }
+
+    @Test fun removedCodeLanguagesStayPlainDespiteContentDetection() = runTest(dispatcher) {
+        val model = model("name: value")
+        for ((index, extension) in listOf("kt", "kts", "java", "js", "mjs", "cjs").withIndex()) {
+            open(model, file.copy(id = DocumentId("code$index"), name = "file.$extension"))
+            assertEquals(FileMode.YAML, model.state.value.mode)
+            assertEquals("text", model.state.value.highlightLanguage().id)
+        }
+    }
+
+    @Test fun xmlFormattingUsesSelectedLanguageAndCanBeUndone() = runTest(dispatcher) {
+        val original = "<root><child>text</child><empty/></root>"
+        val model = model(original)
+        open(model)
+        model.setLanguage(LanguageRegistry.forFileName("sample.xml"))
+        assertEquals(FileMode.TEXT, model.state.value.mode)
+        model.format()
+        model.state.first { !it.formatting && it.dirty }
+        assertEquals("<root>\n  <child>text</child>\n  <empty/>\n</root>", model.state.value.value.text)
+        model.undo()
+        assertEquals(original, model.state.value.value.text)
+        assertFalse(model.state.value.dirty)
+    }
+
+    @Test fun yamlFormattingUsesSelectedLanguageAndCanBeUndone() = runTest(dispatcher) {
+        val original = "root:\n    title: 'unchanged' # comment\n    items:\n        - one\n"
+        val model = model(original)
+        open(model)
+        model.setLanguage(LanguageRegistry.forFileName("sample.yml"))
+        model.format()
+        model.state.first { !it.formatting && it.dirty }
+        assertEquals("root:\n  title: 'unchanged' # comment\n  items:\n    - one\n", model.state.value.value.text)
+        model.undo()
+        assertEquals(original, model.state.value.value.text)
+        assertFalse(model.state.value.dirty)
     }
 
     @Test fun replaceAllCommitsImeAndUndoRestoresTextSelectionAndCleanRevision() = runTest(dispatcher) {

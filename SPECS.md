@@ -1,5 +1,53 @@
 # Structa — Plan técnico para editor Android propio
 
+## Lenguajes disponibles en el editor (2026-10-05)
+
+El selector «Lenguaje» ofrece Texto sin formato, Go, JSON, YAML, Markdown y XML.
+XML (`xml`, `svg`, `xsd`, `xsl`, `xslt`) resalta etiquetas, atributos, valores,
+entidades, comentarios y CDATA con estado entre líneas. La selección se conserva
+por pestaña durante la sesión; archivos nuevos se detectan por extensión. Los
+archivos Kotlin, Java y JavaScript se abren y editan como texto sin formato; el
+soporte Android «Abrir con» para JavaScript sigue disponible. La tokenización
+es léxica: no analiza lenguajes incrustados en XML. «Formatear» admite JSON,
+YAML y XML según el lenguaje efectivo de la pestaña (XML conserva `FileMode.TEXT`).
+El botón se habilita únicamente para estos tres lenguajes. XML sangra etiquetas
+sin reescribir texto, atributos, comentarios ni CDATA; evita cambiar espacios en
+contenido mixto o bajo `xml:space="preserve"`. Deja intactos documentos con DTD
+o estructuras que no puede reconocer de forma segura. YAML ajusta solo la sangría
+de mapas y secuencias de bloque inequívocos, manteniendo literalmente los valores,
+comentarios, comillas, anclas y saltos de línea; ante escalares de bloque, mapeos
+implícitos de ítems de secuencia, directivas o estructuras ambiguas deja intacto
+el documento. No se incorporó una biblioteca YAML ni se reserializan sus datos.
+El formateo de otros lenguajes todavía no está implementado.
+
+## Integración «Abrir con» de Android (2026-10-05)
+
+La actividad principal anuncia `ACTION_VIEW` y `ACTION_EDIT` para URI `content://`
+de tipo `text/*`, JSON, XML, YAML y JavaScript. Los intents recibidos al iniciar
+o estando abierta la actividad conducen al editor y reutilizan una pestaña con
+el mismo URI. Se consultan nombre y tamaño mediante `OpenableColumns`, por lo
+que también se admiten proveedores que no implementan `DocumentsProvider`; la
+lectura sigue respetando el máximo de 25 MB. Cuando el proveedor concede permisos
+persistibles se conservan para restaurar la sesión; un permiso temporal puede
+caducar y un URI de solo lectura requiere usar Guardar como para exportar cambios.
+
+## Actualización: resaltado en archivos grandes (2026-10-05)
+
+El límite de 1 048 576 unidades UTF-16 de la fase 11 ahora separa dos estrategias:
+por debajo se mantiene el snapshot completo incremental; por encima, el editor
+resalta la ventana visible y margen con estados léxicos en checkpoints cada 128
+líneas. Al desplazarse reutiliza checkpoints anteriores; las ediciones invalidan
+solo los estados desde la primera línea modificada, incluso al insertar/eliminar
+líneas o aplicar varias operaciones. Un salto a una región aún no analizada puede
+requerir recorrer el prefijo para reconstruir el estado de comentarios/cadenas
+multilínea; el cálculo se hace en background con una copia inmutable del tramo.
+El cache por ventana permanece en memoria durante la vida de la View.
+
+El selector de Lenguaje aplica JSON/YAML/Texto también al resaltado, además del
+formateo. Siguen independientes el límite de apertura de 25 MB y el presupuesto
+de expansión de reemplazos. Los párrafos históricos posteriores que hablan de
+texto plano obligatorio por tamaño describen el comportamiento anterior.
+
 ## Estado posterior a fase 11 — edición de archivos grandes (2026-10-04)
 
 La fase 12 queda pospuesta por petición del usuario. Se retiró el bloqueo heredado

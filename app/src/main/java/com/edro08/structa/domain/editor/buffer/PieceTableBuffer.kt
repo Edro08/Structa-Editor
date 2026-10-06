@@ -11,6 +11,16 @@ class PieceTableBuffer(initialText: CharSequence = "") : TextBuffer {
     private var pieces = if (original.isEmpty()) mutableListOf() else
         mutableListOf(Piece(BufferSource.ORIGINAL, 0, original.length))
     private val lines = MutableLineIndex(original)
+    private val recentChanges = ArrayDeque<Pair<Long, Int>>()
+    var changeSerial: Long = 0
+        private set
+
+    /** Earliest affected line since a reader's last revision; zero if the bounded log expired. */
+    fun firstChangedLineSince(serial: Long): Int? {
+        if (serial == changeSerial) return null
+        if (serial < (recentChanges.firstOrNull()?.first ?: changeSerial) - 1) return 0
+        return recentChanges.filter { it.first > serial }.minOfOrNull { it.second } ?: 0
+    }
 
     /** Read-only interface to the live line index. */
     val lineIndex: LineIndex get() = lines
@@ -38,6 +48,7 @@ class PieceTableBuffer(initialText: CharSequence = "") : TextBuffer {
         // Snapshot the supplied sequence once, including mutable CharSequences.
         val inserted = text.toString()
         if (start == end && inserted.isEmpty()) return
+        val changedLine = lines.getLineForOffset(start)
         require(inserted.length <= Int.MAX_VALUE - (length - (end - start))) { "Document too large" }
         require(inserted.length <= Int.MAX_VALUE - added.length) { "Added store too large" }
 
@@ -51,6 +62,8 @@ class PieceTableBuffer(initialText: CharSequence = "") : TextBuffer {
         lines.replace(start, end, inserted)
         pieces = replacement
         length += inserted.length - (end - start)
+        recentChanges.addLast(++changeSerial to changedLine)
+        if (recentChanges.size > 1024) recentChanges.removeFirst()
     }
 
     override fun getText(start: Int, end: Int): CharSequence {

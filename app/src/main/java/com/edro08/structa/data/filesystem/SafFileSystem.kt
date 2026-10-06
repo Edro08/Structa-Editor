@@ -32,7 +32,12 @@ class SafFileSystem(context: Context) : FileSystem {
         return FileEntry(DocumentId(file.uri.toString()), file.name ?: "Sin nombre", file.length(), file.isDirectory)
     }
 
-    override suspend fun stat(id: DocumentId) = withContext(Dispatchers.IO) { entry(document(id)) }
+    override suspend fun stat(id: DocumentId) = withContext(Dispatchers.IO) {
+        val uri = Uri.parse(id.value)
+        if (DocumentsContract.isTreeUri(uri) && !DocumentsContract.isDocumentUri(context, uri))
+            entry(document(id))
+        else externalDocument(context, uri)
+    }
 
     override suspend fun create(parent: DocumentId, name: String, directory: Boolean) = withContext(Dispatchers.IO) {
         validateName(name)

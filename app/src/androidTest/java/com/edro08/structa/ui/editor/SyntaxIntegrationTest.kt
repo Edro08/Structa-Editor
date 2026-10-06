@@ -28,10 +28,10 @@ import java.util.concurrent.TimeUnit
 
 class SyntaxIntegrationTest {
     @get:Rule val compose = createComposeRule()
-    private val kotlin = LanguageRegistry.forFileName("a.kt")
+    private val go = LanguageRegistry.forFileName("a.go")
     private lateinit var view: StructaEditorView
     private fun input(text: String) = EditorInputSession(EditorEngine(EditorDocument(PieceTableBuffer(text))))
-    private fun launch(input: EditorInputSession, state: EditorViewState, language: Language = kotlin) {
+    private fun launch(input: EditorInputSession, state: EditorViewState, language: Language = go) {
         compose.setContent {
             AndroidView(modifier = Modifier.fillMaxSize(), factory = { context ->
                 StructaEditorView(context).also {
@@ -50,7 +50,7 @@ class SyntaxIntegrationTest {
     }
 
     @Test fun attachedViewHighlightsEditsUndoAndSwitchesIndependentDocuments() {
-        val original = "val a = 1\n".repeat(100)
+        val original = "var a = 1\n".repeat(100)
         val first = input(original)
         val saved = EditorViewState()
         launch(first, saved)
@@ -75,7 +75,7 @@ class SyntaxIntegrationTest {
         awaitText("{\"key\": true}")
         compose.runOnIdle {
             assertEquals("json", view.syntaxSnapshot!!.languageId)
-            view.bind(first.engine, inputSession = first, savedViewState = saved, language = kotlin)
+            view.bind(first.engine, inputSession = first, savedViewState = saved, language = go)
             assertSame(saved.syntax, view.syntaxSnapshot)
             assertEquals(original, first.buffer.getText(0, first.buffer.length).toString())
             assertFalse(first.engine.document.dirty)
@@ -97,18 +97,57 @@ class SyntaxIntegrationTest {
         try {
             assertTrue(started.await(5, TimeUnit.SECONDS))
             compose.runOnIdle {
-                val next = input("val current = 1")
-                view.bind(next.engine, inputSession = next, savedViewState = EditorViewState(), language = kotlin)
+                val next = input("var current = 1")
+                view.bind(next.engine, inputSession = next, savedViewState = EditorViewState(), language = go)
             }
-            awaitText("val current = 1")
+            awaitText("var current = 1")
         } finally { release.countDown() }
         assertTrue(finished.await(5, TimeUnit.SECONDS))
-        compose.runOnIdle { assertEquals("kotlin", view.syntaxSnapshot!!.languageId) }
+        compose.runOnIdle { assertEquals("go", view.syntaxSnapshot!!.languageId) }
+    }
+
+    @Test fun largeDocumentHighlightsDistantViewportAndRetokenizesEditedLine() {
+        val content = "/*\n" + "inside\n".repeat(160_000) + "*/ var x = 1"
+        val session = input(content)
+        launch(session, EditorViewState())
+        compose.runOnIdle { view.scrollToPosition(0f, Float.MAX_VALUE) }
+        val last = session.buffer.lineCount - 1
+        compose.waitUntil(15_000) {
+            view.visibleSyntaxWindow?.spansAt(last)?.any { it.style == SyntaxStyle.KEYWORD } == true
+        }
+        compose.runOnIdle {
+            assertNull(view.syntaxSnapshot)
+            assertEquals(SyntaxStyle.COMMENT, view.visibleSyntaxWindow!!.spansAt(last).first().style)
+            session.execute(MoveCursorCommand(TextOffset(content.length)), false)
+            session.execute(InsertTextCommand(" // end"))
+            assertTrue(view.visibleSyntaxWindow == null ||
+                view.visibleSyntaxWindow!!.lines.last().text.endsWith(" // end"))
+        }
+        compose.waitUntil(5_000) {
+            view.visibleSyntaxWindow?.lines?.lastOrNull()?.text?.endsWith(" // end") == true
+        }
+        compose.runOnIdle {
+            assertTrue(view.visibleSyntaxWindow!!.spansAt(last).any { it.style == SyntaxStyle.COMMENT })
+        }
+    }
+
+    @Test fun largeJsonHighlightsVisibleKeysWithoutWholeDocumentSnapshot() {
+        val content = "{\"key\": 123}\n".repeat(150_000)
+        val session = input(content)
+        launch(session, EditorViewState(), LanguageRegistry.forFileName("data.json"))
+        compose.waitUntil(10_000) {
+            view.visibleSyntaxWindow?.spansAt(0)?.any { it.style == SyntaxStyle.KEY } == true
+        }
+        compose.runOnIdle {
+            assertTrue(content.length > IncrementalHighlighter.MAX_TEXT_LENGTH)
+            assertNull(view.syntaxSnapshot)
+            assertTrue(view.visibleSyntaxWindow!!.spansAt(0).any { it.style == SyntaxStyle.NUMBER })
+        }
     }
 
     @Test fun canvasColorsSyntaxAfterTabsAndDrawsSearchAndDiagnosticsWithoutMutatingText() {
         compose.runOnIdle {
-            val content = "\tval x = 123\n    "
+            val content = "\tvar x = 123\n    "
             val editor = input(content).engine
             val style = EditorStyle(textSizeSp = 24f)
             val renderer = EditorRenderer(1f) { it }
@@ -120,7 +159,7 @@ class SyntaxIntegrationTest {
                     Decoration(TextRange(TextOffset(13), TextOffset(15)), DecorationType.SEARCH_MATCH),
                     Decoration(TextRange(TextOffset(16), TextOffset(17)), DecorationType.ERROR)))
                 renderer.draw(Canvas(bitmap), editor, renderer.prepare(editor.document.buffer, viewport), viewport,
-                    metrics, 600f, 120f, style, false, syntax = IncrementalHighlighter.highlight(content, kotlin), decorations = decorations)
+                    metrics, 600f, 120f, style, false, syntax = IncrementalHighlighter.highlight(content, go), decorations = decorations)
                 var keywordPixels = 0
                 for (y in 0 until metrics.lineHeight.toInt()) {
                     for (x in metrics.textX(4, 0f).toInt() until metrics.textX(7, 0f).toInt()) {

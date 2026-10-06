@@ -9,12 +9,13 @@ import kotlin.math.floor
 
 internal class TextRenderer {
     fun draw(canvas: Canvas, line: EditorLine, paint: Paint, metrics: EditorMetrics,
-        scrollX: Float, top: Float, width: Float, spans: List<SyntaxSpan> = emptyList(), style: EditorStyle = EditorStyle()) {
+        scrollX: Float, top: Float, width: Float, spans: List<SyntaxSpan> = emptyList(), style: EditorStyle = EditorStyle(),
+        columnStart: Int = 0, columnEnd: Int = line.columnCount) {
         // Clip long lines horizontally as well as limiting the vertical viewport.
         val first = floor(((scrollX - metrics.textPadding) / metrics.characterWidth).toDouble())
-            .toInt().coerceIn(0, line.columnCount)
+            .toInt().coerceIn(columnStart, columnEnd.coerceAtLeast(columnStart))
         val last = ceil(((scrollX + width - metrics.gutterWidth) / metrics.characterWidth).toDouble())
-            .toInt().coerceIn(first, line.columnCount)
+            .toInt().coerceIn(first, columnEnd.coerceAtLeast(first))
         fun draw(from: Int, to: Int, color: Int) {
             val start = maxOf(first, from)
             val end = minOf(last, to)

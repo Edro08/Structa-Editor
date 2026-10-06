@@ -52,8 +52,8 @@ class KeyBindingHandler(
         when (event.keyCode) {
             KeyEvent.KEYCODE_DEL -> input.execute(DeleteBackwardCommand)
             KeyEvent.KEYCODE_FORWARD_DEL -> input.execute(DeleteForwardCommand)
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> input.commitText("\n")
-            KeyEvent.KEYCODE_TAB -> input.commitText("\t")
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> input.execute(InsertTextCommand("\n"))
+            KeyEvent.KEYCODE_TAB -> input.execute(InsertTextCommand("\t"))
             KeyEvent.KEYCODE_DPAD_LEFT -> input.execute(if (event.isShiftPressed) SelectLeftCommand else MoveCursorLeftCommand, false)
             KeyEvent.KEYCODE_DPAD_RIGHT -> input.execute(if (event.isShiftPressed) SelectRightCommand else MoveCursorRightCommand, false)
             KeyEvent.KEYCODE_MOVE_HOME -> input.execute(if (event.isShiftPressed) SelectHomeCommand else MoveCursorHomeCommand, false)
@@ -63,7 +63,7 @@ class KeyBindingHandler(
             else -> {
                 val codePoint = event.unicodeChar
                 if (codePoint <= 0 || !Character.isValidCodePoint(codePoint)) return false
-                input.commitText(String(Character.toChars(codePoint)))
+                input.execute(InsertTextCommand(String(Character.toChars(codePoint))))
             }
         }
         return true

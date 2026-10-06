@@ -12,5 +12,8 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+        <provider android:name="com.edro08.structa.ui.editor.TestSharedFileProvider"
+            android:authorities="com.edro08.structa.test.shared"
+            android:exported="true" android:grantUriPermissions="true" />
     </application>
 </manifest>

@@ -27,9 +27,10 @@ import com.edro08.structa.ui.screen.settings.*
 import com.edro08.structa.ui.theme.StructaTheme
 import com.edro08.structa.ui.theme.StructaSystemBars
 import kotlinx.coroutines.CancellationException
+import com.edro08.structa.data.filesystem.externalDocument
 
 @Composable
-fun StructaApp() {
+fun StructaApp(openIntent: Intent? = null, onOpenIntentHandled: (Intent) -> Unit = {}) {
     val activity = LocalContext.current as ComponentActivity
     val container = remember { AppContainer(activity.applicationContext) }
     val home: HomeViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
@@ -44,6 +45,36 @@ fun StructaApp() {
     val settingsState by settings.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var platformMessage by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(openIntent) {
+        if (openIntent != null) {
+            try {
+                val uri = openIntent.data ?: throw IllegalArgumentException("Missing document URI")
+                val entry = externalDocument(activity, uri)
+                if (entry.isDirectory) throw IllegalArgumentException("Not a file")
+                val grants = openIntent.flags and
+                    (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                if (openIntent.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0 && grants != 0) {
+                    try {
+                        activity.contentResolver.takePersistableUriPermission(uri, grants)
+                    } catch (_: SecurityException) {
+                        if (grants and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+                            try {
+                                activity.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            } catch (_: SecurityException) { /* This URI only has a temporary grant. */ }
+                        }
+                    }
+                }
+                editor.openExternal(entry)
+                screen = Screen.EDITOR
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                platformMessage = R.string.error_open_external_file
+            } finally {
+                onOpenIntentHandled(openIntent)
+            }
+        }
+    }
     LaunchedEffect(editorState.tabs, browserState.workspace?.id) {
         browser.setOpenDocuments(editorState.tabs.map { it.documentId })
     }
@@ -102,16 +133,18 @@ fun StructaApp() {
                              }, onRetry = browser::refresh, onToggle = browser::toggleFolder,
                              onCreate = browser::create, onRename = browser::rename, onDelete = browser::delete)
                         Screen.EDITOR -> EditorScreen(editorState, onBack = { screen = Screen.BROWSER },
-                            editorFont = settingsState.editorFont, editorFontSize = settingsState.editorFontSize,
-                            onExplore = { screen = Screen.BROWSER }, onMode = editor::setMode,
+                             editorFont = settingsState.editorFont, editorFontSize = settingsState.editorFontSize,
+                             onExplore = { screen = Screen.BROWSER }, onLanguage = editor::setLanguage,
                              onMessage = editor::showMessage,
-                             onSave = editor::save, onSelectDocument = editor::selectDocument,
-                             onCloseDocument = editor::requestClose, onCancelClose = editor::cancelClose,
+                              onSave = editor::save, onSaveAll = editor::saveAll, onSelectDocument = editor::selectDocument,
+                              onCloseDocument = editor::requestClose, onCloseAll = editor::requestCloseAll,
+                              onCloseOthers = editor::requestCloseOthers, onCancelClose = editor::cancelClose,
                              onDiscardClose = editor::discardAndClose, onSaveClose = editor::saveAndClose,
                              onSearch = editor::setSearch, onFormat = editor::format, onUndo = editor::undo,
                              onSearchOptions = editor::setSearchOptions, onReplacement = editor::setReplacement,
                              onFindNext = editor::findNext, onReplace = editor::replace, onQuickOpen = quickOpen::open,
-                            onRedo = editor::redo, onLine = editor::goToLine, onSaveAs = {
+                             onRedo = editor::redo, onLine = editor::goToLine,
+                             onGoToStart = editor::goToStart, onGoToEnd = editor::goToEnd, onSaveAs = {
                                 editor.prepareSave()?.let { snapshot ->
                                     try {
                                         saveAs.launch(snapshot.name)

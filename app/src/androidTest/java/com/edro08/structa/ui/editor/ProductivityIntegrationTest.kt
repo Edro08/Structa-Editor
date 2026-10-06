@@ -1,5 +1,7 @@
 package com.edro08.structa.ui.editor
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.input.key.Key
@@ -8,6 +10,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.viewModelScope
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
+import com.edro08.structa.domain.editor.syntax.SyntaxStyle
+import com.edro08.structa.ui.editor.view.StructaEditorView
+import com.edro08.structa.ui.editor.model.WordWrapMode
 import com.edro08.structa.application.browser.ListDirectory
 import com.edro08.structa.application.document.*
 import com.edro08.structa.application.editor.*
@@ -46,11 +53,12 @@ class ProductivityIntegrationTest {
             val state by model.state.collectAsState()
             val quickState by quick.state.collectAsState()
             StructaTheme {
-                EditorScreen(state, {}, {}, model::setMode, model::setSearch, model::format,
+                 EditorScreen(state, {}, {}, model::setLanguage, model::setSearch, model::format,
                     model::undo, model::redo, model::goToLine, {}, model::showMessage, model::save,
                     model::selectDocument, model::requestClose, model::cancelClose, model::discardAndClose,
                     model::saveAndClose, model::setSearchOptions, model::setReplacement, model::findNext,
-                    model::replace, quick::open)
+                    model::replace, quick::open, onGoToStart = model::goToStart,
+                    onGoToEnd = model::goToEnd)
                 if (quickState.visible) ProductivityPicker("Abrir", quickState.query, quick::setQuery,
                     quickState.files.map { it.entry.name to it.relativePath }, quickState.message, quickState.indexing,
                     onChoose = { model.open(quickState.files[it].entry); quick.close() }, onDismiss = quick::close)
@@ -79,6 +87,33 @@ class ProductivityIntegrationTest {
         compose.onNodeWithText("Deshacer").performClick()
         compose.runOnIdle {
             assertEquals("cat\ncat CAT", model.state.value.value.text)
+            assertFalse(model.state.value.dirty)
+        }
+    }
+
+    @Test fun wordWrapMenuKeepsModePerTabAndDoesNotEditTheDocument() {
+        launch()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Ajuste de línea").performClick()
+        compose.runOnIdle {
+            assertEquals(WordWrapMode.VIEWPORT, model.state.value.viewState.wordWrapMode)
+            assertEquals("cat\ncat CAT", model.state.value.value.text)
+            assertFalse(model.state.value.dirty)
+        }
+        onView(isAssignableFrom(StructaEditorView::class.java)).check { raw, error ->
+            if (error != null) throw error
+            assertFalse((raw as StructaEditorView).isHorizontalScrollBarEnabled)
+        }
+        compose.runOnIdle { model.open(b) }
+        compose.waitUntil(5_000) { model.state.value.entry?.id == b.id }
+        compose.runOnIdle { assertEquals(WordWrapMode.OFF, model.state.value.viewState.wordWrapMode) }
+        compose.runOnIdle { model.selectDocument(a.id) }
+        compose.waitUntil(5_000) { model.state.value.entry?.id == a.id }
+        compose.runOnIdle { assertEquals(WordWrapMode.VIEWPORT, model.state.value.viewState.wordWrapMode) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Ajuste de línea").performClick()
+        compose.runOnIdle {
+            assertEquals(WordWrapMode.OFF, model.state.value.viewState.wordWrapMode)
             assertFalse(model.state.value.dirty)
         }
     }
@@ -113,17 +148,121 @@ class ProductivityIntegrationTest {
         compose.onNodeWithText("Buscar dentro del archivo").performKeyInput {
             keyDown(Key.CtrlLeft); keyDown(Key.ShiftLeft); pressKey(Key.P); keyUp(Key.ShiftLeft); keyUp(Key.CtrlLeft)
         }
-        compose.onNodeWithText("Ir a línea").performClick()
+        compose.onNodeWithText("Ir a línea...").performClick()
          compose.onNodeWithText("Número de línea").performTextInput("2")
          compose.onNodeWithText("Número de línea").performKeyInput { pressKey(Key.Enter) }
         compose.runOnIdle { assertEquals(TextRange(4), model.state.value.value.selection) }
         compose.onNodeWithContentDescription("Menú Editor").performClick()
         compose.onNodeWithText("Lenguaje", substring = false).performClick()
         compose.onNodeWithText("Lenguaje del archivo").assertExists()
-        compose.onNodeWithText("Texto").assertExists()
+         compose.onNodeWithText("Texto sin formato").assertExists()
         compose.onNodeWithText("JSON", substring = false).assertExists()
         compose.onNodeWithText("YAML").performClick()
         compose.runOnIdle { assertEquals(FileMode.YAML, model.state.value.mode) }
         compose.runOnIdle { assertFalse(model.state.value.dirty) }
+    }
+
+    @Test fun editMenuGoToStartAndEndRevealsCursorWithoutEditing() {
+        launch()
+        val text = "long line\n".repeat(200)
+        compose.runOnIdle { model.edit(TextFieldValue(text)) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Ir al final").performClick()
+        compose.waitUntil(5_000) { model.state.value.viewState.scrollY > 0f }
+        compose.runOnIdle { assertEquals(TextRange(text.length), model.state.value.value.selection) }
+
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Ir al inicio").performClick()
+        compose.waitUntil(5_000) { model.state.value.viewState.scrollY == 0f }
+        compose.runOnIdle {
+            assertEquals(TextRange(0), model.state.value.value.selection)
+            assertEquals(text, model.state.value.value.text)
+        }
+    }
+
+    @Test fun selectingJsonLanguageHighlightsKeysAndSwitchingToTextClearsSpans() {
+        launch()
+        val json = "{\"name\": true, \"count\": 4"
+        compose.runOnIdle { model.edit(TextFieldValue(json)) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+        compose.onNodeWithText("JSON", substring = false).performClick()
+        compose.waitUntil(5_000) { model.state.value.viewState.syntax?.languageId == "json" }
+        compose.runOnIdle {
+            val snapshot = model.state.value.viewState.syntax!!
+            assertTrue(snapshot.lines.single().result.spans.any { it.style == SyntaxStyle.KEY })
+            assertTrue(snapshot.lines.single().result.spans.any { it.style == SyntaxStyle.NUMBER })
+            assertEquals(json, model.state.value.value.text)
+        }
+        onView(isAssignableFrom(StructaEditorView::class.java)).check { raw, error ->
+            if (error != null) throw error
+            val view = raw as StructaEditorView
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            try {
+                view.draw(Canvas(bitmap))
+                val hasColoredKey = (0 until minOf(view.height, 160)).any { y ->
+                    (0 until view.width).any { x -> bitmap.getPixel(x, y) == view.style.key }
+                }
+                assertTrue("La clave JSON debe pintarse con el color de sintaxis", hasColoredKey)
+            } finally { bitmap.recycle() }
+        }
+
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+         compose.onNodeWithText("Texto sin formato").performClick()
+        compose.waitUntil(5_000) { model.state.value.viewState.syntax == null }
+        compose.runOnIdle {
+            assertEquals("text", model.state.value.highlightLanguage().id)
+            assertEquals(json, model.state.value.value.text)
+        }
+    }
+
+    @Test fun languageDialogSelectsXmlAndGoForSyntaxWithoutChangingDocument() {
+        launch()
+        val xml = "<item name=\"x\">value</item>"
+        compose.runOnIdle { model.edit(TextFieldValue(xml)) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+        compose.onNodeWithText("Go").assertExists()
+        compose.onNodeWithText("Markdown").assertExists()
+        compose.onNodeWithText("XML").performScrollTo().performClick()
+        compose.waitUntil(5_000) { model.state.value.viewState.syntax?.languageId == "xml" }
+        compose.runOnIdle {
+            assertEquals(FileMode.TEXT, model.state.value.mode)
+            assertEquals(xml, model.state.value.value.text)
+            assertTrue(model.state.value.viewState.syntax!!.lines[0].result.spans.any { it.style == SyntaxStyle.KEY })
+        }
+        val go = "var name = `hello`"
+        compose.runOnIdle { model.edit(TextFieldValue(go)) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+        compose.onNodeWithText("Go").performScrollTo().performClick()
+        compose.waitUntil(5_000) { model.state.value.viewState.syntax?.languageId == "go" }
+        compose.runOnIdle {
+            assertEquals(FileMode.TEXT, model.state.value.mode)
+            assertEquals(go, model.state.value.value.text)
+            assertTrue(model.state.value.viewState.syntax!!.lines[0].result.spans.any { it.style == SyntaxStyle.KEYWORD })
+            assertTrue(model.state.value.viewState.syntax!!.lines[0].result.spans.any { it.style == SyntaxStyle.STRING })
+        }
+    }
+
+    @Test fun formatMenuFormatsYamlButDisablesUnsupportedLanguages() {
+        launch()
+        val original = "root:\n    title: 'keep' # note\n    items:\n        - one"
+        compose.runOnIdle { model.edit(TextFieldValue(original)) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+        compose.onNodeWithText("YAML", substring = false).performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Formatear", substring = false).assertIsEnabled().performClick()
+        compose.waitUntil(5_000) {
+            model.state.value.value.text == "root:\n  title: 'keep' # note\n  items:\n    - one"
+        }
+        compose.runOnIdle { model.undo(); assertEquals(original, model.state.value.value.text) }
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Lenguaje", substring = false).performClick()
+        compose.onNodeWithText("Go").performClick()
+        compose.onNodeWithContentDescription("Menú Editor").performClick()
+        compose.onNodeWithText("Formatear", substring = false).assertIsNotEnabled()
     }
 }

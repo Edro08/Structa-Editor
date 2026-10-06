@@ -10,21 +10,24 @@ import java.util.concurrent.CancellationException
 import kotlin.random.Random
 
 class SyntaxTest {
-    private val kotlin = LanguageRegistry.forFileName("main.kt")
+    private val go = LanguageRegistry.forFileName("main.go")
     private fun highlight(text: String, previous: SyntaxSnapshot? = null) =
-        IncrementalHighlighter.highlight(text, kotlin, previous)
+        IncrementalHighlighter.highlight(text, go, previous)
 
     @Test fun registryDetectsSpecifiedLanguagesAndFallsBackWithoutGuessing() {
-        listOf("go", "kt", "java", "json", "yaml", "md").forEach {
+        listOf("go", "json", "yaml", "md", "xml").forEach {
             assertNotEquals("text", LanguageRegistry.forFileName("file.$it").id)
         }
-        assertEquals(kotlin, LanguageRegistry.forFileName("MAIN.KTS"))
+        assertEquals(go, LanguageRegistry.forFileName("MAIN.GO"))
+        listOf("kt", "kts", "java", "js", "mjs", "cjs").forEach {
+            assertEquals(LanguageRegistry.plain, LanguageRegistry.forFileName("file.$it"))
+        }
         assertEquals(LanguageRegistry.plain, LanguageRegistry.forFileName("unknown"))
         assertEquals(LanguageRegistry.plain, LanguageRegistry.forFileName("notes.kt.txt"))
     }
 
     @Test fun spansAreUtf16OrderedAndMultilineStatesSurviveEmptyLines() {
-        val text = "val face = \"😀\" // hi\r\n/* outer\n\n/* nested */\nend */ val x = 2"
+        val text = "var face = \"😀\" // hi\r\n/* outer\n\ninside\nend */ var x = 2"
         val result = highlight(text)
         result.lines.forEach { line ->
             var end = 0
@@ -40,7 +43,7 @@ class SyntaxTest {
     }
 
     @Test fun rawStringsJsonKeysYamlCommentsAndMarkdownFences() {
-        val raw = highlight("val s = \"\"\"hello\n/* string */\n\"\"\" + 1")
+        val raw = highlight("var s = `hello\n/* string */\n` + 1")
         assertEquals(SyntaxStyle.STRING, raw.lines[1].result.spans.single().style)
         assertEquals(TokenizerState(), raw.lines.last().result.state)
         val json = LanguageRegistry.forFileName("a.json").tokenizer.tokenize("{\"key\": true, \"x\": 1e-2}")
@@ -57,7 +60,7 @@ class SyntaxTest {
     }
 
     @Test fun localEditsReuseStableSuffixEvenWhenLinesAreInsertedOrDeleted() {
-        val before = "val a = 1\nval b = 2\nval c = 3\n"
+        val before = "var a = 1\nvar b = 2\nvar c = 3\n"
         val initial = highlight(before)
         val edited = highlight(before.replace("b = 2", "b = 4"), initial)
         assertEquals(1, edited.tokenizedLines)
@@ -71,9 +74,9 @@ class SyntaxTest {
     }
 
     @Test fun changesPropagateUntilLexicalStateConvergesAndUndoMatchesFullScan() {
-        val before = "val a = 1\nword\n*/\nval b = 2"
+        val before = "var a = 1\nword\n*/\nvar b = 2"
         val initial = highlight(before)
-        val after = highlight(before.replace("val a = 1", "/*"), initial)
+        val after = highlight(before.replace("var a = 1", "/*"), initial)
         assertEquals(3, after.tokenizedLines)
         assertSame(initial.lines[3], after.lines[3])
         val undone = highlight(before, after)
@@ -83,8 +86,8 @@ class SyntaxTest {
 
     @Test fun randomInsertionsDeletionsAndReplacementsAgreeWithFullTokenization() {
         val random = Random(42)
-        var current = highlight("/* comment */\nval a = \"text\"\n\n")
-        val pieces = listOf("\n", "/*", "*/", "\"\"\"", "\"", "\\", "😀", "val ", "x", "")
+        var current = highlight("/* comment */\nvar a = \"text\"\n\n")
+        val pieces = listOf("\n", "/*", "*/", "`", "\"", "\\", "😀", "var ", "x", "")
         repeat(250) {
             val start = random.nextInt(current.text.length + 1)
             val end = random.nextInt(start, current.text.length + 1)
@@ -95,15 +98,15 @@ class SyntaxTest {
     }
 
     @Test fun cancelledWorkDoesNotMutatePublishedSnapshotAndLargeTextIsLimited() {
-        val initial = highlight("val a = 1")
+        val initial = highlight("var a = 1")
         var checks = 0
         try {
-            IncrementalHighlighter.highlight("\"" + "\\x".repeat(30_000), kotlin, initial) {
+            IncrementalHighlighter.highlight("\"" + "\\x".repeat(30_000), go, initial) {
                 if (++checks > 5) throw CancellationException()
             }
             fail("Expected cooperative cancellation inside a string")
         } catch (_: CancellationException) { }
-        assertEquals("val a = 1", initial.text)
+        assertEquals("var a = 1", initial.text)
         assertTrue(highlight("x".repeat(IncrementalHighlighter.MAX_TEXT_LENGTH + 1)).limited)
         assertEquals(1, highlight("").lines.size)
     }

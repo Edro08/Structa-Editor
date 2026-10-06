@@ -3,6 +3,10 @@ package com.edro08.structa.ui.screen.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,6 +18,8 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.FolderOpen
@@ -38,15 +44,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.edro08.structa.R
 import com.edro08.structa.domain.document.DocumentId
-import com.edro08.structa.domain.filesystem.FileMode
+import com.edro08.structa.domain.editor.syntax.Language
+import com.edro08.structa.domain.editor.syntax.LanguageRegistry
 import com.edro08.structa.ui.editor.component.StructaEditor
+import com.edro08.structa.ui.editor.model.WordWrapMode
 import com.edro08.structa.ui.editor.input.EditorAction
 import com.edro08.structa.ui.editor.input.applicationActionFor
 import com.edro08.structa.domain.editor.search.SearchOptions
@@ -57,10 +65,13 @@ import com.edro08.structa.ui.component.WorkspaceSelection
 import com.edro08.structa.ui.theme.ScreenStyle
 
 @Composable
-private fun modeName(mode: FileMode): String = stringResource(when (mode) {
-    FileMode.TEXT -> R.string.editor_text_mode
-    FileMode.JSON -> R.string.editor_json_mode
-    FileMode.YAML -> R.string.editor_yaml_mode
+private fun languageName(language: Language): String = stringResource(when (language.id) {
+    "go" -> R.string.editor_language_go
+    "json" -> R.string.editor_language_json
+    "yaml" -> R.string.editor_language_yaml
+    "markdown" -> R.string.editor_language_markdown
+    "xml" -> R.string.editor_language_xml
+    else -> R.string.editor_language_plain
 })
 
 @Composable
@@ -82,7 +93,7 @@ private fun actionName(action: EditorAction): String = stringResource(when (acti
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit,
-    onMode: (FileMode) -> Unit, onSearch: (String) -> Unit,
+    onLanguage: (Language) -> Unit, onSearch: (String) -> Unit,
     onFormat: () -> Unit, onUndo: () -> Unit, onRedo: () -> Unit, onLine: (Int) -> Unit, onSaveAs: () -> Unit,
     onMessage: (String) -> Unit,
     onSave: () -> Unit, onSelectDocument: (DocumentId) -> Unit, onCloseDocument: (DocumentId) -> Unit,
@@ -90,7 +101,8 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
     onSearchOptions: (SearchOptions) -> Unit = {}, onReplacement: (String) -> Unit = {},
     onFindNext: (Boolean) -> Unit = {}, onReplace: (Boolean) -> Unit = {}, onQuickOpen: () -> Unit = {},
     editorFont: com.edro08.structa.domain.settings.EditorFont = com.edro08.structa.domain.settings.EditorFont.MONOSPACE,
-    editorFontSize: Int = 14) {
+    editorFontSize: Int = 14, onCloseAll: () -> Unit = {}, onCloseOthers: () -> Unit = {},
+    onGoToStart: () -> Unit = {}, onGoToEnd: () -> Unit = {}, onSaveAll: () -> Unit = {}) {
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var showReplace by rememberSaveable { mutableStateOf(false) }
     var showFileMenu by remember { mutableStateOf(false) }
@@ -108,7 +120,8 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
         EditorAction.REPLACE -> entry != null && !state.loading
         EditorAction.UNDO -> !state.loading && state.canUndo
         EditorAction.REDO -> !state.loading && state.canRedo
-        EditorAction.FORMAT -> entry != null && !state.loading && !state.formatting
+        EditorAction.FORMAT -> entry != null && !state.loading && !state.formatting &&
+            state.highlightLanguage().id in setOf("json", "xml", "yaml")
         EditorAction.FIND_NEXT, EditorAction.FIND_PREVIOUS -> !state.loading && !state.searching && !state.replacing && state.occurrences > 0
         else -> entry != null && !state.loading
     }
@@ -139,21 +152,7 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                   Text(if (state.tabs.size == 1 && state.dirty) stringResource(R.string.editor_dirty_title, title) else title,
                       maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (entry != null) {
-                     val language = remember(entry.name) {
-                         com.edro08.structa.domain.editor.syntax.LanguageRegistry.forFileName(entry.name)
-                     }
-                     val languageName = stringResource(when (language.id) {
-                         "kotlin" -> R.string.editor_language_kotlin
-                         "java" -> R.string.editor_language_java
-                         "go" -> R.string.editor_language_go
-                         "json" -> R.string.editor_language_json
-                         "yaml" -> R.string.editor_language_yaml
-                         "markdown" -> R.string.editor_language_markdown
-                         else -> R.string.editor_language_plain
-                     })
-                     val info = if (state.value.text.length > com.edro08.structa.domain.editor.syntax.IncrementalHighlighter.MAX_TEXT_LENGTH)
-                         R.string.editor_document_info_syntax_limited else R.string.editor_document_info
-                     Text(stringResource(info, languageName, formatBytes(entry.sizeBytes)), maxLines = 1,
+                       Text(stringResource(R.string.editor_document_info, languageName(state.highlightLanguage()), formatBytes(entry.sizeBytes)), maxLines = 1,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -180,13 +179,26 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                          }
                          EditorMenuOption(stringResource(R.string.editor_save), Icons.Filled.Save,
                              enabled = enabled(EditorAction.SAVE)) { showFileMenu = false; dispatch(EditorAction.SAVE) }
-                         EditorMenuOption(stringResource(R.string.editor_save_as), Icons.Filled.SaveAs,
-                             enabled = enabled(EditorAction.SAVE)) {
-                             showFileMenu = false; state.inputSession?.finishComposingText(); onSaveAs()
-                         }
-                         HorizontalDivider()
-                         EditorMenuOption(stringResource(R.string.editor_close), Icons.Filled.Close,
-                             enabled = enabled(EditorAction.CLOSE)) { showFileMenu = false; dispatch(EditorAction.CLOSE) }
+                          EditorMenuOption(stringResource(R.string.editor_save_as), Icons.Filled.SaveAs,
+                              enabled = enabled(EditorAction.SAVE)) {
+                              showFileMenu = false; state.inputSession?.finishComposingText(); onSaveAs()
+                          }
+                          EditorMenuOption(stringResource(R.string.editor_save_all), Icons.Filled.Save,
+                              enabled = state.tabs.any { it.dirty } && !state.loading && !state.saving &&
+                                  state.pendingSave == null && state.pendingClose == null) {
+                              showFileMenu = false; onSaveAll()
+                          }
+                          HorizontalDivider()
+                          EditorMenuOption(stringResource(R.string.editor_close), Icons.Filled.Close,
+                              enabled = enabled(EditorAction.CLOSE)) { showFileMenu = false; dispatch(EditorAction.CLOSE) }
+                          EditorMenuOption(stringResource(R.string.editor_close_all), Icons.Filled.ClearAll,
+                              enabled = state.tabs.isNotEmpty() && !state.loading && state.pendingClose == null && !state.saving) {
+                              showFileMenu = false; onCloseAll()
+                          }
+                          EditorMenuOption(stringResource(R.string.editor_close_others), Icons.Filled.Close,
+                              enabled = state.tabs.size > 1 && entry != null && !state.loading && state.pendingClose == null && !state.saving) {
+                              showFileMenu = false; onCloseOthers()
+                          }
                      }
                  }
                  Box {
@@ -198,15 +210,23 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                              MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(18.dp)),
                          shape = RoundedCornerShape(18.dp),
                          containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                         listOf(Triple(EditorAction.FIND, Icons.Filled.Search, R.string.editor_shortcut_find),
-                             Triple(EditorAction.REPLACE, Icons.Filled.FindReplace, R.string.editor_shortcut_replace),
-                             Triple(EditorAction.GO_TO_LINE, Icons.Filled.FormatListNumbered, R.string.editor_shortcut_line))
-                             .forEach { (action, icon, shortcut) ->
-                                 EditorMenuOption(actionName(action), icon, stringResource(shortcut), enabled(action)) {
-                                     showEditMenu = false; dispatch(action)
-                                 }
-                             }
-                         HorizontalDivider()
+                          listOf(Triple(EditorAction.FIND, Icons.Filled.Search, R.string.editor_shortcut_find),
+                              Triple(EditorAction.REPLACE, Icons.Filled.FindReplace, R.string.editor_shortcut_replace),
+                              Triple(EditorAction.GO_TO_LINE, Icons.Filled.FormatListNumbered, R.string.editor_shortcut_line))
+                              .forEach { (action, icon, shortcut) ->
+                                  EditorMenuOption(actionName(action), icon, stringResource(shortcut), enabled(action)) {
+                                      showEditMenu = false; dispatch(action)
+                                  }
+                              }
+                          EditorMenuOption(stringResource(R.string.editor_go_to_start), Icons.Filled.ArrowUpward,
+                              enabled = enabled(EditorAction.GO_TO_LINE)) {
+                              showEditMenu = false; state.inputSession?.finishComposingText(); onGoToStart()
+                          }
+                          EditorMenuOption(stringResource(R.string.editor_go_to_end), Icons.Filled.ArrowDownward,
+                              enabled = enabled(EditorAction.GO_TO_LINE)) {
+                              showEditMenu = false; state.inputSession?.finishComposingText(); onGoToEnd()
+                          }
+                          HorizontalDivider()
                          listOf(Triple(EditorAction.UNDO, Icons.AutoMirrored.Filled.Undo, R.string.editor_shortcut_undo),
                              Triple(EditorAction.REDO, Icons.AutoMirrored.Filled.Redo, R.string.editor_shortcut_redo))
                              .forEach { (action, icon, shortcut) ->
@@ -217,31 +237,25 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                          HorizontalDivider()
                          EditorMenuOption(actionName(EditorAction.FORMAT), Icons.Filled.AutoFixHigh,
                              enabled = enabled(EditorAction.FORMAT)) { showEditMenu = false; dispatch(EditorAction.FORMAT) }
-                         EditorMenuOption(stringResource(R.string.editor_format), Icons.Filled.Code,
-                             enabled = entry != null && !state.loading, submenu = true) {
-                             showEditMenu = false; showFormatMenu = true
-                         }
+                          EditorMenuOption(stringResource(R.string.editor_format), Icons.Filled.Code,
+                              enabled = entry != null && !state.loading, submenu = true) {
+                              showEditMenu = false; showFormatMenu = true
+                          }
+                          EditorMenuOption(stringResource(R.string.editor_word_wrap), Icons.Filled.Code,
+                              enabled = entry != null && !state.loading,
+                              checked = state.viewState.wordWrapMode == WordWrapMode.VIEWPORT) {
+                              showEditMenu = false
+                              state.viewState.wordWrapMode = if (state.viewState.wordWrapMode == WordWrapMode.OFF)
+                                  WordWrapMode.VIEWPORT else WordWrapMode.OFF
+                          }
                      }
                  }
              })
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            if (state.tabs.size > 1) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                    state.tabs.forEach { tab ->
-                        Surface(color = if (tab.active) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { onSelectDocument(tab.documentId) }) {
-                                     Text(if (tab.dirty) stringResource(R.string.editor_dirty_title, tab.title) else tab.title)
-                                }
-                                 val closeDescription = stringResource(R.string.editor_close_named, tab.title)
-                                 TextButton(onClick = { onCloseDocument(tab.documentId) },
-                                     modifier = Modifier.semantics { contentDescription = closeDescription }) { Text(stringResource(R.string.editor_close_tab)) }
-                            }
-                        }
-                    }
-                }
-            }
+             if (state.tabs.size > 1) {
+                 EditorTabStrip(state.tabs, onSelectDocument, onCloseDocument)
+             }
             if (state.loading) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                  Text(stringResource(R.string.editor_opening), Modifier.padding(16.dp))
@@ -329,7 +343,7 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
                       StructaEditor(input.engine, Modifier.weight(1f).fillMaxWidth(),
                            contentVersion = state.contentVersion, cursorVisible = true,
                             editable = true, inputSession = input, viewState = state.viewState,
-                            fileName = entry.name, searchMatches = state.searchResult.matches,
+                             fileName = entry.name, language = state.highlightLanguage(), searchMatches = state.searchResult.matches,
                              selectedMatch = state.selectedMatch, font = editorFont, fontSize = editorFontSize,
                              onEditorAction = ::dispatch)
                   }
@@ -357,11 +371,13 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
           AlertDialog(onDismissRequest = { showFormatMenu = false },
              shape = RoundedCornerShape(28.dp), containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
              title = { Text(stringResource(R.string.editor_language_dialog)) },
-             text = { Column {
-                 FileMode.entries.forEach { mode ->
-                     WorkspaceSelection(modeName(mode), state.mode == mode) {
-                         state.inputSession?.finishComposingText(); onMode(mode); showFormatMenu = false
-                     }
+              text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                  Text(stringResource(R.string.editor_language_hint), style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+                  LanguageRegistry.languages.forEach { language ->
+                      WorkspaceSelection(languageName(language), state.highlightLanguage().id == language.id) {
+                          state.inputSession?.finishComposingText(); onLanguage(language); showFormatMenu = false
+                      }
                  }
             } }, confirmButton = {},
              dismissButton = { TextButton(onClick = { showFormatMenu = false }) { Text(stringResource(R.string.common_cancel)) } })
@@ -382,12 +398,65 @@ fun EditorScreen(state: EditorUiState, onBack: () -> Unit, onExplore: () -> Unit
 }
 
 @Composable
+private fun EditorTabStrip(tabs: List<EditorTab>, onSelect: (DocumentId) -> Unit,
+    onClose: (DocumentId) -> Unit) {
+    val listState = rememberLazyListState()
+    val activeIndex = tabs.indexOfFirst { it.active }
+    LaunchedEffect(activeIndex) {
+        if (activeIndex >= 0) listState.animateScrollToItem(activeIndex)
+    }
+    val colors = MaterialTheme.colorScheme
+    BoxWithConstraints(Modifier.fillMaxWidth().background(colors.surface)) {
+        val tabWidth = if (tabs.size == 2) maxWidth / 2 else 196.dp
+        Column {
+            LazyRow(Modifier.fillMaxWidth(), state = listState) {
+                itemsIndexed(tabs, key = { _, tab -> tab.documentId.value }) { _, tab ->
+                    val titleColor = if (tab.active) colors.onSurface else colors.onSurfaceVariant
+                    val shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+                    val tabDescription = if (tab.dirty) stringResource(R.string.editor_dirty_title, tab.title) else tab.title
+                    Column(Modifier.width(tabWidth)) {
+                        Row(Modifier.fillMaxWidth().height(52.dp).clip(shape)
+                            .background(if (tab.active) colors.surfaceContainerHigh else colors.surface)
+                            .selectable(selected = tab.active, role = Role.Tab,
+                                onClick = { onSelect(tab.documentId) })
+                            .semantics { contentDescription = tabDescription }
+                            .padding(start = 14.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null,
+                                modifier = Modifier.size(18.dp), tint = titleColor)
+                            Spacer(Modifier.width(10.dp))
+                            Text(tab.title, modifier = Modifier.weight(1f), maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, color = titleColor,
+                                style = MaterialTheme.typography.titleSmall)
+                            if (tab.dirty) {
+                                Spacer(Modifier.width(8.dp))
+                                Box(Modifier.size(8.dp).clip(RoundedCornerShape(50))
+                                    .background(colors.primary))
+                            }
+                            IconButton(onClick = { onClose(tab.documentId) }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.editor_close_named, tab.title),
+                                    modifier = Modifier.size(18.dp), tint = colors.onSurfaceVariant)
+                            }
+                        }
+                        Box(Modifier.fillMaxWidth().height(3.dp)
+                            .background(if (tab.active) colors.primary else Color.Transparent))
+                    }
+                }
+            }
+            HorizontalDivider(color = colors.outlineVariant.copy(alpha = .45f))
+        }
+    }
+}
+
+@Composable
 private fun EditorMenuOption(label: String, icon: ImageVector, shortcut: String? = null,
-    enabled: Boolean = true, submenu: Boolean = false, onClick: () -> Unit) {
+    enabled: Boolean = true, submenu: Boolean = false, checked: Boolean = false, onClick: () -> Unit) {
     DropdownMenuItem(text = { Text(label, maxLines = 1) }, onClick = onClick, enabled = enabled,
         leadingIcon = { Icon(icon, contentDescription = null,
             tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f)) },
         trailingIcon = when {
+            checked -> {{ Icon(Icons.Filled.Check, contentDescription = null) }}
             shortcut != null -> {{ Text(shortcut, style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant) }}
             submenu -> {{ Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) }}

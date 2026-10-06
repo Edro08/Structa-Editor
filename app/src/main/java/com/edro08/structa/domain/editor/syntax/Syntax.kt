@@ -20,15 +20,12 @@ object LanguageRegistry {
             TokenizationResult(emptyList(), TokenizerState())
     })
     val languages = listOf(plain,
-        Language("kotlin", "Kotlin", setOf("kt", "kts"), CodeTokenizer("kotlin",
-            "as break class continue do else false for fun if in interface is null object package return super this throw true try typealias typeof val var when while by catch constructor delegate dynamic field file finally get import init param property receiver set setparam where actual abstract annotation companion const crossinline data enum expect external final infix inline inner internal lateinit noinline open operator out override private protected public reified sealed suspend tailrec vararg")),
-        Language("java", "Java", setOf("java"), CodeTokenizer("java",
-            "abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for if implements import instanceof int interface long native new null package private protected public record return sealed short static strictfp super switch synchronized this throw throws transient true false try var void volatile while yield")),
         Language("go", "Go", setOf("go"), CodeTokenizer("go",
             "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var true false nil")),
         Language("json", "JSON", setOf("json", "jsonl"), CodeTokenizer("json", "true false null")),
         Language("yaml", "YAML", setOf("yaml", "yml"), CodeTokenizer("yaml", "true false null yes no on off")),
-        Language("markdown", "Markdown", setOf("md", "markdown"), MarkdownTokenizer))
+        Language("markdown", "Markdown", setOf("md", "markdown"), MarkdownTokenizer),
+        Language("xml", "XML", setOf("xml", "svg", "xsd", "xsl", "xslt"), XmlTokenizer))
 
     fun forFileName(name: String): Language {
         val extension = name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
@@ -52,7 +49,6 @@ internal class CodeTokenizer(private val kind: String, keywords: String) : Langu
             while (i < text.length) {
                 tick()
                 if (at("*/")) { i += 2; depth--; if (depth == 0) break }
-                else if (kind == "kotlin" && at("/*")) { depth++; i += 2 }
                 else i++
             }
         }
@@ -81,14 +77,14 @@ internal class CodeTokenizer(private val kind: String, keywords: String) : Langu
             when {
                 c.isWhitespace() -> i++
                 (kind == "yaml" && c == '#' && (i == 0 || text[i - 1].isWhitespace())) ||
-                    (kind !in setOf("json", "yaml") && at("//")) -> {
+                    (kind == "go" && at("//")) -> {
                     i = text.length; emit(start, SyntaxStyle.COMMENT)
                 }
-                kind !in setOf("json", "yaml") && at("/*") -> {
+                kind == "go" && at("/*") -> {
                     depth = 1; i += 2; comment(); emit(start, SyntaxStyle.COMMENT)
                 }
                 c == '"' || (c == '\'' && kind != "json") || (c == '`' && kind == "go") -> {
-                    delimiter = if (kind in setOf("kotlin", "java") && at("\"\"\"")) "\"\"\"" else c.toString()
+                    delimiter = c.toString()
                     i += delimiter.length; string()
                     var next = i
                     while (next < text.length && text[next].isWhitespace()) { checkCancelled(); next++ }
@@ -113,6 +109,63 @@ internal class CodeTokenizer(private val kind: String, keywords: String) : Langu
             }
         }
         return TokenizationResult(spans.toList(), TokenizerState(depth, delimiter))
+    }
+}
+
+/** XML tags, attributes, entities, comments and CDATA; state crosses line and viewport boundaries. */
+internal object XmlTokenizer : LanguageTokenizer {
+    override fun tokenize(text: CharSequence, state: TokenizerState, checkCancelled: () -> Unit): TokenizationResult {
+        val spans = mutableListOf<SyntaxSpan>()
+        var tag = state.commentDepth // 0 = text, 1 = attributes, 2 = tag name still pending
+        var delimiter = state.delimiter
+        var i = 0
+        var work = 0
+        fun tick() { if (work++ % 256 == 0) checkCancelled() }
+        fun at(value: String) = i + value.length <= text.length && value.indices.all { text[i + it] == value[it] }
+        fun emit(start: Int, style: SyntaxStyle) { if (i > start) spans += SyntaxSpan(start, i, style) }
+        fun until(end: String, style: SyntaxStyle, start: Int = i) {
+            while (i < text.length) {
+                tick()
+                if (at(end)) { i += end.length; delimiter = ""; break }
+                i++
+            }
+            emit(start, style)
+        }
+        while (i < text.length) {
+            checkCancelled()
+            val start = i
+            when {
+                delimiter.isNotEmpty() -> until(delimiter,
+                    if (delimiter == "-->") SyntaxStyle.COMMENT else SyntaxStyle.STRING)
+                at("<!--") -> { tag = 0; delimiter = "-->"; i += 4; until(delimiter, SyntaxStyle.COMMENT, start) }
+                at("<![CDATA[") -> { tag = 0; delimiter = "]]>"; i += 9; until(delimiter, SyntaxStyle.STRING, start) }
+                at("</") || at("<?") || at("<!") -> {
+                    i += 2; tag = 2; emit(start, SyntaxStyle.OPERATOR)
+                }
+                text[i] == '<' -> { i++; tag = 2; emit(start, SyntaxStyle.OPERATOR) }
+                tag != 0 && (at("/>") || at("?>")) -> {
+                    i += 2; tag = 0; emit(start, SyntaxStyle.OPERATOR)
+                }
+                tag != 0 && text[i] == '>' -> { i++; tag = 0; emit(start, SyntaxStyle.OPERATOR) }
+                tag != 0 && (text[i] == '"' || text[i] == '\'') -> {
+                    delimiter = text[i].toString(); i++; until(delimiter, SyntaxStyle.STRING, start)
+                }
+                text[i] == '&' -> {
+                    i++
+                    while (i < text.length && (text[i].isLetterOrDigit() || text[i] in "#xX")) { tick(); i++ }
+                    if (i < text.length && text[i] == ';') { i++; emit(start, SyntaxStyle.OPERATOR) }
+                }
+                tag != 0 && (text[i].isLetter() || text[i] == '_' || text[i] == ':') -> {
+                    i++
+                    while (i < text.length && (text[i].isLetterOrDigit() || text[i] in "_:-.")) { tick(); i++ }
+                    emit(start, if (tag == 2) SyntaxStyle.KEYWORD else SyntaxStyle.KEY)
+                    tag = 1
+                }
+                tag != 0 && text[i] in "=/" -> { i++; emit(start, SyntaxStyle.OPERATOR) }
+                else -> i++
+            }
+        }
+        return TokenizationResult(spans, TokenizerState(tag, delimiter))
     }
 }
 

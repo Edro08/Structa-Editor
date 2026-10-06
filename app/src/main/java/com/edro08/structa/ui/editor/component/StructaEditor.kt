@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.luminance
 import com.edro08.structa.domain.editor.syntax.LanguageRegistry
+import com.edro08.structa.domain.editor.syntax.Language
 import com.edro08.structa.domain.editor.search.SearchMatch
 import com.edro08.structa.domain.editor.decoration.*
 import com.edro08.structa.domain.editor.cursor.TextOffset
@@ -18,6 +19,7 @@ import com.edro08.structa.ui.editor.view.StructaEditorView
 import com.edro08.structa.ui.editor.input.EditorInputSession
 import com.edro08.structa.ui.editor.input.EditorAction
 import com.edro08.structa.ui.editor.model.EditorViewState
+import com.edro08.structa.ui.editor.model.WordWrapMode
 import com.edro08.structa.domain.settings.EditorFont
 
 /** Input and toolbar share the same session; engine commands remain the only mutation path. */
@@ -31,6 +33,7 @@ fun StructaEditor(
     inputSession: EditorInputSession? = null,
     viewState: EditorViewState? = null,
     fileName: String = "",
+    language: Language? = null,
     searchMatches: List<SearchMatch> = emptyList(),
     selectedMatch: Int = -1,
     font: EditorFont = EditorFont.MONOSPACE,
@@ -39,7 +42,7 @@ fun StructaEditor(
 ) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
-    val language = remember(fileName) { LanguageRegistry.forFileName(fileName) }
+    val selectedLanguage = language ?: remember(fileName) { LanguageRegistry.forFileName(fileName) }
     val decorations = remember(searchMatches, selectedMatch) {
         DecorationSet(searchMatches.mapIndexed { index, match ->
             Decoration(TextRange(TextOffset(match.start), TextOffset(match.end)),
@@ -72,7 +75,8 @@ fun StructaEditor(
             view.cursorVisible = cursorVisible
             view.editable = editable
             view.onEditorAction = onEditorAction
-            view.bind(engine, contentVersion, inputSession, viewState, language)
+            view.bind(engine, contentVersion, inputSession, viewState, selectedLanguage)
+            view.wordWrapMode = viewState?.wordWrapMode ?: WordWrapMode.OFF
             view.decorations = decorations
         }
     )

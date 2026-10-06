@@ -1,11 +1,15 @@
 package com.edro08.structa.ui.editor.model
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.edro08.structa.domain.editor.cursor.Cursor
 import com.edro08.structa.domain.editor.cursor.Selection
 import com.edro08.structa.domain.editor.cursor.TextOffset
 
 /** In-memory view snapshot, separate from document content/history. Logical edits use the engine. */
 class EditorViewState {
+    var wordWrapMode by mutableStateOf(WordWrapMode.OFF)
     var syntax: com.edro08.structa.domain.editor.syntax.SyntaxSnapshot? = null
     var onScrollChanged: (() -> Unit)? = null
     var cursor: Cursor = Cursor(TextOffset(0))

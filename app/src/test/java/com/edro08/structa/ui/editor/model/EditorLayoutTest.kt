@@ -1,9 +1,22 @@
 package com.edro08.structa.ui.editor.model
 
+import com.edro08.structa.domain.editor.buffer.PieceTableBuffer
 import org.junit.Assert.*
 import org.junit.Test
 
 class EditorLayoutTest {
+    @Test
+    fun wrappingMapsVisualRowsBackToLogicalLinesWithoutChangingOffsets() {
+        val buffer = PieceTableBuffer("abcdefghij\n\tX\n\nend")
+        val layout = WrappedLayout(buffer, 5)
+        assertEquals(7, layout.rowCount)
+        assertEquals(listOf(0, 3, 5, 6, 7), (0..4).map(layout::firstRow))
+        assertEquals(listOf(0, 0, 0, 1, 1, 2, 3), (0 until layout.rowCount).map(layout::lineAt))
+        assertEquals(2, layout.rowFor(0, 10))
+        assertEquals(10, layout.segmentStart(2, 0))
+        assertEquals("abcdefghij\n\tX\n\nend", buffer.getText(0, buffer.length).toString())
+    }
+
     @Test
     fun viewportReadsOnlyVisibleLinesAndMarginFromLargeDocument() {
         val viewport = EditorViewport.calculate(100_000, 400f, 20f, 50f, 46_800f)

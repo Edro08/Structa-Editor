@@ -1,5 +1,47 @@
 # Contexto de trabajo — Structa
 
+Actualización 2026-10-05: «Formatear» añade YAML conservador (sangría de mapas y
+secuencias de bloque inequívocos, sin reserializar; deja intactos escalares de
+bloque y casos ambiguos). Se habilita para JSON, YAML y XML según el lenguaje
+efectivo. Kotlin, Java y JavaScript dejan el selector, el registro de extensiones
+y las ramas léxicas de resaltado: sus archivos se abren como texto plano, incluido
+«Abrir con» de JavaScript. Go, JSON, YAML, Markdown y XML conservan resaltado.
+Pruebas JVM de preservación, idempotencia y Undo adaptadas; pruebas instrumentadas
+de sintaxis y selector actualizadas.
+
+Actualización 2026-10-05: «Formatear» admite XML además de JSON. El formateador
+XML usa el lenguaje efectivo de cada pestaña aunque XML mantenga `FileMode.TEXT`;
+sangra la estructura con dos espacios y conserva texto mixto, atributos, comentarios,
+CDATA y `xml:space="preserve"`. Ante DTD o estructura no reconocida deja el texto
+intacto. La operación conserva Undo/Redo y las protecciones de revisión existentes.
+Pruebas JVM específicas de formato XML y del ViewModel añadidas.
+
+Actualización 2026-10-05: el selector «Lenguaje» ahora ofrece todos los lenguajes
+con resaltado: Texto, Kotlin, Java, Go, JSON, YAML, Markdown, XML y JavaScript.
+XML resalta etiquetas/atributos/entidades/comentarios/CDATA y JS añade plantillas
+backtick y comentarios de bloque con estados entre líneas; detección por extensiones
+xml/svg/xsd/xsl/xslt y js/mjs/cjs. La selección por pestaña utiliza `setLanguage`
+y conserva `FileMode.TEXT` para XML/JS y demás código; solo JSON tiene formateo
+automático. Sin gramática completa de interpolación JS, regex o código incrustado.
+
+Actualización 2026-10-05: Android muestra Structa en «Abrir con» para URI
+`content://` de texto/JSON/XML/YAML/JavaScript mediante ACTION_VIEW/ACTION_EDIT.
+`MainActivity` recibe intents iniciales y nuevos, `StructaApp` consulta metadata
+`OpenableColumns`, toma el permiso persistible si existe y abre/reutiliza pestaña
+tras restauración. `SafFileSystem.stat` también consulta proveedores `content://`
+no SAF. Para permisos solo de lectura, Guardar como exporta; guardar el original
+requiere permiso de escritura. Android test con proveedor externo y suite completa
+verificados en Pixel_6_Pro AVD; conservar cambios previos sin commit.
+
+Actualización 2026-10-05: «Lenguaje» controla el resaltado además del formato.
+Para archivos de más de 1 048 576 unidades UTF-16, `StructaEditorView` utiliza
+`ViewportHighlighter` con ventanas visibles, checkpoints de estado cada 128 líneas
+y un registro acotado de líneas modificadas en `PieceTableBuffer`; ya no indica
+resaltado desactivado por tamaño. Los cierres históricos que afirman texto plano
+por superar 1 MB corresponden al comportamiento previo. La primera visita lejana
+puede requerir reconstruir el estado desde el inicio; edición IME y `syncInput`
+conservan otros recorridos O(n).
+
 Actualizado: edición de archivos grandes, validación UTC 2026-10-04.
 
 ## Objetivo y estado

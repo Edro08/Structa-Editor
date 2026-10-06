@@ -40,10 +40,11 @@ class EditorDocumentsIntegrationTest {
         compose.setContent {
             val state by model.state.collectAsState()
             StructaTheme {
-                EditorScreen(state, {}, {}, model::setMode, model::setSearch, model::format,
+                 EditorScreen(state, {}, {}, model::setLanguage, model::setSearch, model::format,
                     model::undo, model::redo, model::goToLine, {}, model::showMessage, model::save,
                     model::selectDocument, model::requestClose, model::cancelClose, model::discardAndClose,
-                    model::saveAndClose)
+                     model::saveAndClose, onSaveAll = model::saveAll, onCloseAll = model::requestCloseAll,
+                    onCloseOthers = model::requestCloseOthers)
             }
         }
         open(a)
@@ -58,14 +59,15 @@ class EditorDocumentsIntegrationTest {
         launch()
         compose.runOnIdle { model.edit(TextFieldValue("unsaved")) }
         open(b)
-        compose.onNodeWithText("a.txt ●").performClick()
+        compose.onNodeWithContentDescription("a.txt ●").assertIsNotSelected().performClick()
         compose.runOnIdle { assertEquals("unsaved", model.state.value.value.text) }
+        compose.onNodeWithContentDescription("a.txt ●").assertIsSelected()
         compose.onNodeWithContentDescription("Cerrar a.txt").performClick()
         compose.onNodeWithText("Cancelar").performClick()
-        compose.onNodeWithText("a.txt ●").assertExists()
+        compose.onNodeWithContentDescription("a.txt ●").assertExists()
         compose.onNodeWithContentDescription("Cerrar a.txt").performClick()
         compose.onNodeWithText("Descartar").performClick()
-        compose.onNodeWithText("a.txt ●").assertDoesNotExist()
+        compose.onNodeWithContentDescription("a.txt ●").assertDoesNotExist()
         compose.runOnIdle {
             assertEquals(b.id, model.state.value.entry?.id)
             assertEquals("one", disk[a.id])
@@ -84,6 +86,59 @@ class EditorDocumentsIntegrationTest {
         compose.runOnIdle {
             assertEquals("saved", model.state.value.value.text)
             assertFalse(model.state.value.dirty)
+        }
+    }
+
+    @Test fun activeTabRemainsReachableWhenMoreTabsThanFitOnScreen() {
+        launch()
+        val files = (0..5).map { index ->
+            FileEntry(DocumentId("tab$index"), "file-$index.json", 3, false)
+        }
+        files.forEach { file ->
+            disk[file.id] = "one"
+            open(file)
+        }
+        compose.onNodeWithContentDescription("file-5.json").assertIsSelected()
+        compose.onNodeWithContentDescription("Cerrar file-5.json").performClick()
+        compose.runOnIdle { assertEquals(6, model.state.value.tabs.size) }
+        compose.runOnIdle { model.selectDocument(files.first().id) }
+        compose.onNodeWithContentDescription("file-0.json").assertIsSelected()
+        compose.runOnIdle { assertEquals(files.first().id, model.state.value.entry?.id) }
+    }
+
+    @Test fun fileMenuClosesOtherTabsAndThenAllTabs() {
+        launch()
+        compose.runOnIdle { model.edit(TextFieldValue("unsaved")) }
+        open(b)
+        compose.onNodeWithText("Archivo").performClick()
+        compose.onNodeWithText("Cerrar los demás").assertIsEnabled().performClick()
+        compose.onNodeWithText("Descartar").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(b.id), model.state.value.tabs.map { it.documentId })
+            assertEquals("one", disk[a.id])
+        }
+        open(a)
+        compose.onNodeWithText("Archivo").performClick()
+        compose.onNodeWithText("Cerrar todos").assertIsEnabled().performClick()
+        compose.onNodeWithText("No hay un archivo abierto").assertExists()
+        compose.runOnIdle { assertTrue(model.state.value.tabs.isEmpty()) }
+    }
+
+    @Test fun fileMenuSaveAllPersistsDirtyTabsWithoutSwitching() {
+        launch()
+        compose.onNodeWithText("Archivo").performClick()
+        compose.onNodeWithText("Guardar todo").assertIsNotEnabled()
+        compose.onNodeWithText("Guardar Como...").assertExists()
+        compose.onNodeWithText("Guardar todo").assertExists()
+        compose.runOnIdle { model.edit(TextFieldValue("edited a")) }
+        open(b)
+        compose.runOnIdle { model.edit(TextFieldValue("edited b")) }
+        compose.onNodeWithText("Guardar todo").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { !model.state.value.saving && model.state.value.tabs.none { it.dirty } }
+        compose.runOnIdle {
+            assertEquals("edited a", disk[a.id])
+            assertEquals("edited b", disk[b.id])
+            assertEquals(b.id, model.state.value.entry?.id)
         }
     }
 

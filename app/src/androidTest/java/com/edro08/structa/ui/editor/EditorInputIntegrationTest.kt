@@ -142,6 +142,25 @@ class EditorInputIntegrationTest {
     }
 
     @Test
+    fun hardwareLettersInsertAtCaretEvenWhenImeMarkedPreviousWordAsComposing() {
+        launch("name")
+        compose.runOnIdle {
+            val ime = connection()
+            assertTrue(ime.setSelection(4, 4))
+            assertTrue(ime.setComposingRegion(0, 4))
+            assertTrue(key(KeyEvent.KEYCODE_E))
+            assertEquals("namee", text())
+            assertEquals(5, input.active)
+            assertNull(input.composition)
+            assertTrue(key(KeyEvent.KEYCODE_S))
+            assertEquals("namees", text())
+            input.execute(UndoCommand)
+            assertEquals("namee", text())
+            ime.closeConnection()
+        }
+    }
+
+    @Test
     fun clipboardCutPasteAndUndoPreserveContent() {
         launch("hello")
         compose.runOnIdle {

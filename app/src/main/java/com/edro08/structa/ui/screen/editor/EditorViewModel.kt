@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.edro08.structa.application.document.OpenDocument
 import com.edro08.structa.application.document.SaveDocumentCopy
 import com.edro08.structa.application.editor.FormatJsonDocument
+import com.edro08.structa.application.editor.FormatXmlDocument
+import com.edro08.structa.application.editor.FormatYamlDocument
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileEntry
 import com.edro08.structa.domain.filesystem.FileMode
@@ -18,6 +20,8 @@ import com.edro08.structa.domain.editor.buffer.PieceTableBuffer
 import com.edro08.structa.domain.editor.document.EditorDocument
 import com.edro08.structa.domain.editor.command.*
 import com.edro08.structa.domain.editor.search.*
+import com.edro08.structa.domain.editor.syntax.Language
+import com.edro08.structa.domain.editor.syntax.LanguageRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
@@ -40,6 +44,7 @@ data class EditorUiState(
     val entry: FileEntry? = null,
     val value: TextFieldValue = TextFieldValue(),
     val mode: FileMode = FileMode.TEXT,
+    val languageOverride: Language? = null,
     val inputSession: EditorInputSession? = null,
     val viewState: EditorViewState = EditorViewState(),
     val tabs: List<EditorTab> = emptyList(),
@@ -65,12 +70,30 @@ data class EditorUiState(
     val message: String? = null
 )
 
+private fun FileMode.syntaxLanguage(): Language = when (this) {
+    FileMode.JSON -> LanguageRegistry.languages.first { it.id == "json" }
+    FileMode.YAML -> LanguageRegistry.languages.first { it.id == "yaml" }
+    FileMode.TEXT -> LanguageRegistry.plain
+}
+
+fun EditorUiState.highlightLanguage(): Language {
+    languageOverride?.let { return it }
+    // Removed code grammars always open as plain text, even if content heuristics resemble YAML/JSON.
+    if (entry?.name?.substringAfterLast('.', "")?.lowercase(java.util.Locale.ROOT) in
+        setOf("kt", "kts", "java", "js", "mjs", "cjs")) return LanguageRegistry.plain
+    val detected = entry?.let { LanguageRegistry.forFileName(it.name) } ?: LanguageRegistry.plain
+    if (detected != LanguageRegistry.plain) return detected
+    return mode.syntaxLanguage()
+}
+
 class EditorViewModel(
     private val openDocument: OpenDocument,
     private val formatDocument: FormatJsonDocument,
     private val saveCopy: SaveDocumentCopy,
     private val sessionRepository: SessionRepository? = null,
-    private val fileSystem: FileSystem? = null
+    private val fileSystem: FileSystem? = null,
+    private val formatXmlDocument: FormatXmlDocument = FormatXmlDocument(),
+    private val formatYamlDocument: FormatYamlDocument = FormatYamlDocument()
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(EditorUiState())
     val state = mutableState.asStateFlow()
@@ -83,6 +106,8 @@ class EditorViewModel(
     private var restoring = false
     private var checkpointJob: Job? = null
     private val searchJobs = mutableMapOf<DocumentId, Job>()
+    private val closeQueue = ArrayDeque<DocumentId>()
+    private var advancingCloseQueue = false
 
     init {
         if (sessionRepository != null && fileSystem != null) {
@@ -196,6 +221,13 @@ class EditorViewModel(
         }
     }
 
+    fun openExternal(entry: FileEntry) {
+        viewModelScope.launch {
+            while (restoring) delay(20)
+            open(entry)
+        }
+    }
+
     fun edit(value: TextFieldValue) {
         if (!canEdit(state.value)) return
         val input = state.value.inputSession ?: return
@@ -226,8 +258,17 @@ class EditorViewModel(
     }
 
     fun setMode(mode: FileMode) {
+        setLanguage(mode.syntaxLanguage())
+    }
+
+    fun setLanguage(language: Language) {
         invalidateFormat()
-        publish(state.value.copy(mode = mode))
+        val mode = when (language.id) {
+            "json" -> FileMode.JSON
+            "yaml" -> FileMode.YAML
+            else -> FileMode.TEXT
+        }
+        publish(state.value.copy(mode = mode, languageOverride = language))
     }
 
     fun setSearch(search: String) {
@@ -325,6 +366,17 @@ class EditorViewModel(
         input.execute(MoveCursorCommand(TextOffset(index)), false)
     }
 
+    fun goToStart() {
+        if (state.value.loading) return
+        state.value.inputSession?.execute(MoveCursorCommand(TextOffset(0)), false)
+    }
+
+    fun goToEnd() {
+        if (state.value.loading) return
+        val input = state.value.inputSession ?: return
+        input.execute(MoveCursorCommand(TextOffset(input.buffer.length)), false)
+    }
+
     fun format() {
         state.value.inputSession?.finishComposingText()
         val snapshot = state.value
@@ -335,7 +387,12 @@ class EditorViewModel(
         mutableState.value = state.value.copy(formatting = true, message = null)
         formatJob = viewModelScope.launch {
             try {
-                val result = formatDocument(snapshot.value.text, snapshot.mode)
+                val result = when (snapshot.highlightLanguage().id) {
+                    "xml" -> formatXmlDocument(snapshot.value.text)
+                    "yaml" -> formatYamlDocument(snapshot.value.text)
+                    "json" -> formatDocument(snapshot.value.text, FileMode.JSON)
+                    else -> snapshot.value.text
+                }
                 if (token != revision || documentToken != generation) return@launch
                 formatJob = null
                 if (result != snapshot.value.text) edit(TextFieldValue(result))
@@ -373,6 +430,41 @@ class EditorViewModel(
 
     fun save() { saveDocument(state.value.entry?.id ?: return, closeAfter = false) }
 
+    fun saveAll() {
+        if (restoring || state.value.loading || state.value.saving || state.value.pendingSave != null ||
+            state.value.pendingClose != null) return
+        val snapshots = documents.values.toList().mapNotNull { opened ->
+            if (!canEdit(opened)) return@mapNotNull null
+            val input = opened.inputSession!!
+            input.finishComposingText()
+            val document = input.engine.document
+            if (!document.dirty) return@mapNotNull null
+            SaveSnapshot(opened.entry!!.name, document.buffer.getText(0, document.buffer.length).toString(),
+                document, document.revision)
+        }
+        if (snapshots.isEmpty()) return
+        mutableState.value = state.value.copy(saving = true, message = null)
+        viewModelScope.launch {
+            var failure: Exception? = null
+            for (snapshot in snapshots) {
+                try {
+                    saveCopy(snapshot.document.id, snapshot.content)
+                    snapshot.document.markSaved(snapshot.revision)
+                    mutableState.value = state.value.copy(
+                        dirty = state.value.inputSession?.engine?.document?.dirty ?: false, tabs = tabs())
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    if (failure == null) failure = exception
+                }
+            }
+            mutableState.value = state.value.copy(saving = false,
+                dirty = state.value.inputSession?.engine?.document?.dirty ?: false, tabs = tabs(),
+                message = failure?.let { "No se pudo guardar el archivo: ${it.message}" }
+                    ?: "Archivo guardado correctamente.")
+        }
+    }
+
     private fun saveDocument(id: DocumentId, closeAfter: Boolean) {
         if (state.value.saving || state.value.pendingSave != null) return
         val opened = documents[id] ?: return
@@ -395,18 +487,23 @@ class EditorViewModel(
                 val activeDirty = state.value.inputSession?.engine?.document?.dirty ?: false
                 mutableState.value = state.value.copy(saving = false, dirty = activeDirty, tabs = tabs(),
                     message = if (destination == snapshot.document.id) "Archivo guardado correctamente." else "Copia guardada correctamente.")
-                if (closeAfter && state.value.pendingClose == snapshot.document.id && !snapshot.document.dirty)
-                    removeDocument(snapshot.document.id)
+                if (closeAfter && state.value.pendingClose == snapshot.document.id) {
+                    if (!snapshot.document.dirty) removeDocument(snapshot.document.id)
+                    else closeQueue.clear()
+                }
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
                 savingDocument = null
+                if (closeAfter) closeQueue.clear()
                 mutableState.value = state.value.copy(saving = false, message = "No se pudo guardar el archivo: ${exception.message}")
             }
         }
     }
 
     fun requestClose(id: DocumentId) {
+        if (state.value.pendingClose != null) return
+        if (state.value.saving) { showMessage("Espera a que termine el guardado."); return }
         val opened = documents[id] ?: return
         opened.inputSession!!.finishComposingText()
         if (savingDocument === opened.inputSession.engine.document) {
@@ -417,7 +514,47 @@ class EditorViewModel(
         else removeDocument(id)
     }
 
-    fun cancelClose() { mutableState.value = state.value.copy(pendingClose = null) }
+    fun requestCloseAll() { startCloseSequence(documents.keys.toList()) }
+
+    fun requestCloseOthers() {
+        val active = state.value.entry?.id ?: return
+        startCloseSequence(documents.keys.filter { it != active })
+    }
+
+    private fun startCloseSequence(ids: List<DocumentId>) {
+        if (restoring || state.value.loading || state.value.pendingClose != null || state.value.saving ||
+            state.value.pendingSave != null) return
+        closeQueue.clear()
+        closeQueue.addAll(ids)
+        continueCloseSequence()
+    }
+
+    private fun continueCloseSequence() {
+        if (advancingCloseQueue) return
+        advancingCloseQueue = true
+        try {
+            while (closeQueue.isNotEmpty()) {
+                val id = closeQueue.removeFirst()
+                val opened = documents[id] ?: continue
+                opened.inputSession!!.finishComposingText()
+                if (savingDocument === opened.inputSession.engine.document) {
+                    closeQueue.clear()
+                    showMessage("Espera a que termine el guardado.")
+                    break
+                }
+                if (opened.inputSession.engine.document.dirty) {
+                    mutableState.value = state.value.copy(pendingClose = id)
+                    break
+                }
+                removeDocument(id)
+            }
+        } finally { advancingCloseQueue = false }
+    }
+
+    fun cancelClose() {
+        closeQueue.clear()
+        mutableState.value = state.value.copy(pendingClose = null)
+    }
     fun discardAndClose() {
         val id = state.value.pendingClose ?: return
         if (savingDocument?.id != id) removeDocument(id)
@@ -445,6 +582,7 @@ class EditorViewModel(
             }
         }
         scheduleCheckpoint()
+        continueCloseSequence()
     }
 
     private fun canEdit(document: EditorUiState): Boolean =

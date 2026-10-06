@@ -8,7 +8,9 @@ import com.edro08.structa.domain.editor.buffer.TextBuffer
 import com.edro08.structa.domain.editor.cursor.TextRange
 import com.edro08.structa.ui.editor.model.EditorLine
 import com.edro08.structa.ui.editor.model.EditorViewport
+import com.edro08.structa.ui.editor.model.WrappedLayout
 import com.edro08.structa.domain.editor.syntax.SyntaxSnapshot
+import com.edro08.structa.domain.editor.syntax.SyntaxWindow
 import com.edro08.structa.domain.editor.decoration.*
 
 /** Read-only renderer; retains layouts only for the viewport plus two lines of margin. */
@@ -57,7 +59,8 @@ class EditorRenderer(private val density: Float, private val textSizeToPixels: (
 
     fun draw(canvas: Canvas, engine: EditorEngine, lines: List<EditorLine>, viewport: EditorViewport,
         metrics: EditorMetrics, width: Float, height: Float, style: EditorStyle, showCursor: Boolean,
-        composing: TextRange? = null, syntax: SyntaxSnapshot? = null, decorations: DecorationSet = DecorationSet()) {
+        composing: TextRange? = null, syntax: SyntaxSnapshot? = null, decorations: DecorationSet = DecorationSet(),
+        syntaxWindow: SyntaxWindow? = null) {
         canvas.drawColor(style.background)
         val currentLine = engine.document.buffer.getLineForOffset(engine.cursor.offset.value)
         val saved = canvas.save()
@@ -94,7 +97,7 @@ class EditorRenderer(private val density: Float, private val textSizeToPixels: (
         for (line in lines) {
             val top = line.number * metrics.lineHeight - viewport.scrollY
             text.draw(canvas, line, textPaint, metrics, viewport.scrollX, top, width,
-                syntax?.lines?.getOrNull(line.number)?.result?.spans.orEmpty(), style)
+                syntaxWindow?.spansAt(line.number) ?: syntax?.lines?.getOrNull(line.number)?.result?.spans.orEmpty(), style)
             if (composing != null) {
                 val columns = line.selectionColumns(composing.start.value, composing.end.value,
                     line.number < engine.document.buffer.lineCount - 1)
@@ -111,5 +114,68 @@ class EditorRenderer(private val density: Float, private val textSizeToPixels: (
         }
         canvas.restoreToCount(saved)
         gutter.draw(canvas, lines, viewport, metrics, height, style, textPaint)
+    }
+
+    fun drawWrapped(canvas: Canvas, engine: EditorEngine, lines: List<EditorLine>, viewport: EditorViewport,
+        layout: WrappedLayout, metrics: EditorMetrics, width: Float, height: Float, style: EditorStyle,
+        showCursor: Boolean, composing: TextRange?, syntax: SyntaxSnapshot?, decorations: DecorationSet,
+        syntaxWindow: SyntaxWindow?) {
+        canvas.drawColor(style.background)
+        val byNumber = lines.associateBy { it.number }
+        val cursorOffset = engine.cursor.offset.value
+        val cursorLine = engine.document.buffer.getLineForOffset(cursorOffset)
+        val saved = canvas.save()
+        canvas.clipRect(metrics.gutterWidth, 0f, width, height)
+        for (row in viewport.firstVisibleLine..viewport.lastVisibleLine) {
+            val number = layout.lineAt(row)
+            val line = byNumber[number] ?: continue
+            val start = layout.segmentStart(row, number)
+            val end = minOf(start + layout.columns, line.columnCount)
+            val scrollX = start * metrics.characterWidth
+            val top = row * metrics.lineHeight - viewport.scrollY
+            if (cursorLine == number && layout.rowFor(number, line.columnAt(cursorOffset - line.startOffset)) == row) {
+                backgroundPaint.color = style.currentLine
+                canvas.drawRect(metrics.gutterWidth, top, width, top + metrics.lineHeight, backgroundPaint)
+            }
+            fun range(from: Int, to: Int, color: Int, underline: Boolean = false) {
+                val left = maxOf(from, start)
+                val right = minOf(to, start + layout.columns)
+                if (right <= left) return
+                backgroundPaint.color = color
+                canvas.drawRect(metrics.textX(left, scrollX),
+                    if (underline) top + metrics.lineHeight - 2 * density else top,
+                    metrics.textX(right, scrollX), top + metrics.lineHeight, backgroundPaint)
+            }
+            for (decoration in decorations.intersecting(line.startOffset, line.startOffset + line.length + 1)) {
+                val columns = line.selectionColumns(decoration.range.start.value, decoration.range.end.value,
+                    number < engine.document.buffer.lineCount - 1)
+                val from = columns?.first ?: line.columnAt(decoration.range.start.value - line.startOffset)
+                val to = columns?.let { it.last + 1 } ?: from + 1
+                val color = when (decoration.type) {
+                    DecorationType.SEARCH_MATCH -> style.searchMatch
+                    DecorationType.SELECTED_OCCURRENCE -> style.selectedOccurrence
+                    DecorationType.ERROR -> style.error
+                    DecorationType.WARNING -> style.warning
+                    DecorationType.BRACKET_MATCH -> style.selection
+                    else -> continue
+                }
+                range(from, to, color, decoration.type == DecorationType.ERROR || decoration.type == DecorationType.WARNING)
+            }
+            line.selectionColumns(engine.selection?.start?.value ?: -1, engine.selection?.end?.value ?: -1,
+                number < engine.document.buffer.lineCount - 1)?.let { range(it.first, it.last + 1, style.selection) }
+            text.draw(canvas, line, textPaint, metrics, scrollX, top, width,
+                syntaxWindow?.spansAt(number) ?: syntax?.lines?.getOrNull(number)?.result?.spans.orEmpty(),
+                style, start, end)
+            composing?.let {
+                line.selectionColumns(it.start.value, it.end.value, number < engine.document.buffer.lineCount - 1)
+                    ?.let { columns -> range(columns.first, columns.last + 1, style.cursor, true) }
+            }
+            if (showCursor && cursorLine == number && layout.rowFor(number,
+                    line.columnAt(cursorOffset - line.startOffset)) == row) {
+                cursor.draw(canvas, line, cursorOffset, metrics, scrollX, top, style.cursor)
+            }
+        }
+        canvas.restoreToCount(saved)
+        gutter.drawWrapped(canvas, layout, viewport, metrics, height, style, textPaint)
     }
 }

@@ -16,6 +16,8 @@ import com.edro08.structa.domain.editor.document.EditorDocument
 import com.edro08.structa.ui.editor.render.EditorRenderer
 import com.edro08.structa.ui.editor.render.EditorStyle
 import com.edro08.structa.ui.editor.model.EditorViewState
+import com.edro08.structa.ui.editor.model.WordWrapMode
+import com.edro08.structa.ui.editor.model.WrappedLayout
 import com.edro08.structa.ui.editor.view.StructaEditorView
 import com.edro08.structa.domain.settings.EditorFont
 import org.junit.Assert.*
@@ -24,6 +26,61 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class StructaEditorViewTest {
+    @Test
+    fun viewportWrapKeepsLogicalOffsetsAndSelectionAcrossResizeAndToggle() = onMain {
+        val content = "a".repeat(50) + "\nnext"
+        val editor = EditorEngine(EditorDocument(PieceTableBuffer(content)))
+        val state = EditorViewState()
+        val view = StructaEditorView(InstrumentationRegistry.getInstrumentation().targetContext)
+        view.bind(editor, savedViewState = state)
+        view.layout(0, 0, 160, 140)
+        val renderer = EditorRenderer(view.resources.displayMetrics.density) {
+            android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, it, view.resources.displayMetrics)
+        }
+        fun geometry(): Pair<com.edro08.structa.ui.editor.render.EditorMetrics, WrappedLayout> {
+            val metrics = renderer.metrics(2, view.style)
+            val columns = ((view.width - metrics.gutterWidth - metrics.textPadding * 2 - metrics.cursorWidth) /
+                metrics.characterWidth).toInt().coerceAtLeast(1)
+            return metrics to WrappedLayout(editor.document.buffer, columns)
+        }
+        state.wordWrapMode = WordWrapMode.VIEWPORT
+        view.wordWrapMode = state.wordWrapMode
+        draw(view)
+        val (metrics, layout) = geometry()
+        assertEquals(0f, view.viewport.scrollX, 0f)
+        val secondRowY = metrics.lineHeight * 1.5f
+        assertEquals(layout.columns + 1, view.offsetAt(metrics.textX(1, 0f), secondRowY))
+        assertEquals(layout.columns, view.offsetAt(10_000f, metrics.lineHeight * .5f))
+        editor.execute(SetSelectionCommand(TextOffset(1), TextOffset(layout.columns + 2)))
+        view.refresh(false)
+        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        try {
+            view.draw(Canvas(bitmap))
+            assertEquals(view.style.selection, bitmap.getPixel(metrics.textX(0, 0f).toInt() + 1,
+                (metrics.lineHeight * 1.9f).toInt()))
+            editor.execute(SetSelectionCommand(TextOffset(layout.columns), TextOffset(layout.columns)))
+            view.refresh(false)
+            view.draw(Canvas(bitmap))
+            assertEquals(view.style.cursor, bitmap.getPixel(metrics.textX(0, 0f).toInt() + 1,
+                secondRowY.toInt()))
+        } finally { bitmap.recycle() }
+        view.scrollToPosition(10_000f, 0f)
+        assertEquals(0f, view.viewport.scrollX, 0f)
+        view.layout(0, 0, 250, 140)
+        draw(view)
+        val (resizedMetrics, resized) = geometry()
+        assertTrue(resized.rowCount < layout.rowCount)
+        assertEquals(resized.columns + 1,
+            view.offsetAt(resizedMetrics.textX(1, 0f), resizedMetrics.lineHeight * 1.5f))
+        state.wordWrapMode = WordWrapMode.OFF
+        view.wordWrapMode = state.wordWrapMode
+        draw(view)
+        view.scrollToPosition(200f, 0f)
+        assertTrue(view.viewport.scrollX > 0f)
+        assertEquals(content, editor.document.buffer.getText(0, editor.document.buffer.length).toString())
+        assertFalse(editor.canUndo)
+    }
+
     @Test
     fun changingEditorTypographyRecalculatesViewportWithoutEditingDocument() = onMain {
         val editor = EditorEngine(EditorDocument(PieceTableBuffer("hello\n".repeat(100))))

@@ -20,6 +20,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import com.edro08.structa.domain.editor.EditorEngine
+import com.edro08.structa.domain.editor.buffer.PieceTableBuffer
 import com.edro08.structa.domain.editor.command.InsertTextCommand
 import com.edro08.structa.domain.editor.command.MoveCursorCommand
 import com.edro08.structa.domain.editor.command.SetSelectionCommand
@@ -28,6 +29,8 @@ import com.edro08.structa.ui.editor.input.*
 import com.edro08.structa.ui.editor.model.EditorLine
 import com.edro08.structa.ui.editor.model.EditorViewport
 import com.edro08.structa.ui.editor.model.EditorViewState
+import com.edro08.structa.ui.editor.model.WordWrapMode
+import com.edro08.structa.ui.editor.model.WrappedLayout
 import com.edro08.structa.ui.editor.render.EditorRenderer
 import com.edro08.structa.ui.editor.render.EditorStyle
 import com.edro08.structa.domain.editor.syntax.*
@@ -79,7 +82,7 @@ class StructaEditorView @JvmOverloads constructor(
         }
     private val inputChanged: (Boolean) -> Unit = {
         if (it) decorations = DecorationSet()
-        refresh()
+        refresh(it)
         revealCursor()
         resetBlink()
         notifyIme()
@@ -91,13 +94,32 @@ class StructaEditorView @JvmOverloads constructor(
     private var offsetY = 0f
     private var maxX = 0f
     private var maxY = 0f
+    private var wrappedLayout: WrappedLayout? = null
+    var wordWrapMode: WordWrapMode = WordWrapMode.OFF
+        set(value) {
+            if (field == value) return
+            field = value
+            scroller.forceFinished(true)
+            isHorizontalScrollBarEnabled = value == WordWrapMode.OFF
+            wrappedLayout = null
+            updateViewport()
+            revealCursor()
+            invalidate()
+        }
     private var syntaxScope: CoroutineScope? = null
     private var syntaxJob: Job? = null
     private var syntaxGeneration = 0L
     private var requestedSyntaxText: String? = null
     private var language: Language = LanguageRegistry.plain
+    private class LargeSyntaxCache(val languageId: String, var serial: Long) {
+        val checkpoints = java.util.TreeMap<Int, TokenizerState>().apply { put(0, TokenizerState()) }
+        var window: SyntaxWindow? = null
+        var requestedRange: IntRange? = null
+    }
+    private var largeSyntaxCache: LargeSyntaxCache? = null
     var syntaxSnapshot: SyntaxSnapshot? = null
         private set
+    val visibleSyntaxWindow: SyntaxWindow? get() = largeSyntaxCache?.window
     var decorations: DecorationSet = DecorationSet()
         set(value) { field = value; invalidate() }
 
@@ -179,6 +201,7 @@ class StructaEditorView @JvmOverloads constructor(
             syntaxGeneration++
             requestedSyntaxText = null
             syntaxSnapshot = null
+            largeSyntaxCache = null
         }
         this.language = language
         if (changed || inputChanged) {
@@ -205,8 +228,9 @@ class StructaEditorView @JvmOverloads constructor(
     }
 
     /** Invalidates visible line layouts after commands. Does not recreate the document. */
-    fun refresh() {
+    fun refresh(contentChanged: Boolean = true) {
         renderer.invalidateContent()
+        if (contentChanged) wrappedLayout = null
         scheduleSyntax()
         contentDescription = "Editor de código, ${engine?.document?.buffer?.lineCount ?: 0} líneas"
         invalidate()
@@ -216,14 +240,27 @@ class StructaEditorView @JvmOverloads constructor(
         val editor = engine ?: return
         val scope = syntaxScope ?: return
         val buffer = editor.document.buffer
-        if (language == LanguageRegistry.plain || buffer.length > IncrementalHighlighter.MAX_TEXT_LENGTH) {
+        if (language == LanguageRegistry.plain) {
             syntaxJob?.cancel()
             syntaxGeneration++
             requestedSyntaxText = null
             syntaxSnapshot = null
+            largeSyntaxCache = null
             viewState?.syntax = null
             return
         }
+        if (buffer.length > IncrementalHighlighter.MAX_TEXT_LENGTH) {
+            if (requestedSyntaxText != null) {
+                syntaxJob?.cancel()
+                syntaxGeneration++
+                requestedSyntaxText = null
+            }
+            syntaxSnapshot = null
+            viewState?.syntax = null
+            scheduleLargeSyntax(editor, buffer as? PieceTableBuffer ?: return, scope)
+            return
+        }
+        largeSyntaxCache = null
         val text = buffer.getText(0, buffer.length).toString()
         if (requestedSyntaxText == text) return
         requestedSyntaxText = text
@@ -245,6 +282,50 @@ class StructaEditorView @JvmOverloads constructor(
         }
     }
 
+    private fun scheduleLargeSyntax(editor: EditorEngine, buffer: PieceTableBuffer, scope: CoroutineScope) {
+        if (viewport.lastVisibleLine < viewport.firstVisibleLine) return
+        var cache = largeSyntaxCache
+        if (cache == null || cache.languageId != language.id) {
+            cache = LargeSyntaxCache(language.id, buffer.changeSerial)
+            largeSyntaxCache = cache
+        }
+        val firstChanged = buffer.firstChangedLineSince(cache.serial)
+        if (firstChanged != null) {
+            cache.serial = buffer.changeSerial
+            cache.checkpoints.tailMap(firstChanged + 1, true).clear()
+            if (cache.window?.let { firstChanged < it.firstLine + it.lines.size } == true) cache.window = null
+            cache.requestedRange = null
+            syntaxJob?.cancel()
+            syntaxGeneration++
+        }
+        val metrics = renderer.metrics(buffer.lineCount, style)
+        val wrap = if (wordWrapMode == WordWrapMode.VIEWPORT && width > 0) layoutForWrap(buffer, metrics) else null
+        val first = wrap?.lineAt(viewport.firstVisibleLine) ?: viewport.firstVisibleLine
+        val last = wrap?.lineAt(viewport.lastVisibleLine) ?: viewport.lastVisibleLine
+        if (cache.window?.let { first >= it.firstLine && last < it.firstLine + it.lines.size } == true) return
+        val range = (first - 32).coerceAtLeast(0)..(last + 64).coerceAtMost(buffer.lineCount - 1)
+        if (cache.requestedRange == range) return
+        cache.requestedRange = range
+        syntaxJob?.cancel()
+        val token = ++syntaxGeneration
+        val serial = cache.serial
+        val start = cache.checkpoints.floorKey(range.first) ?: 0
+        val incoming = cache.checkpoints.getValue(start)
+        // The buffer belongs to the UI thread. Workers receive only this immutable slice.
+        val text = buffer.getText(buffer.getLineStart(start), buffer.getLineEnd(range.last)).toString()
+        val requestedLanguage = language
+        syntaxJob = scope.launch {
+            val result = withContext(Dispatchers.Default) {
+                ViewportHighlighter.highlight(text, start, range.first, requestedLanguage, incoming) { ensureActive() }
+            }
+            if (token == syntaxGeneration && engine === editor && buffer.changeSerial == serial && largeSyntaxCache === cache) {
+                cache.checkpoints.putAll(result.checkpoints)
+                cache.window = result.window
+                invalidate()
+            }
+        }
+    }
+
     fun scrollToPosition(x: Float, y: Float) {
         require(x.isFinite() && y.isFinite())
         // Prepare the target viewport before limiting horizontal movement to its known width.
@@ -253,13 +334,25 @@ class StructaEditorView @JvmOverloads constructor(
         invalidate()
     }
 
+    private fun layoutForWrap(buffer: com.edro08.structa.domain.editor.buffer.TextBuffer,
+        metrics: com.edro08.structa.ui.editor.render.EditorMetrics): WrappedLayout {
+        val columns = ((width - metrics.gutterWidth - metrics.textPadding * 2 - metrics.cursorWidth) /
+            metrics.characterWidth).toInt().coerceAtLeast(1)
+        return wrappedLayout?.takeIf { it.columns == columns } ?: WrappedLayout(buffer, columns).also { wrappedLayout = it }
+    }
+
     private fun updateViewport(x: Float = offsetX, y: Float = offsetY) {
         val buffer = engine?.document?.buffer ?: return
         val metrics = renderer.metrics(buffer.lineCount, style)
-        maxY = EditorViewport.maxScrollY(buffer.lineCount, height.toFloat(), metrics.lineHeight)
-        val requested = EditorViewport.calculate(buffer.lineCount, height.toFloat(), metrics.lineHeight, x, y)
-        renderer.prepare(buffer, requested)
-        maxX = renderer.maxScrollX(width.toFloat(), metrics)
+        val wrap = if (wordWrapMode == WordWrapMode.VIEWPORT && width > 0) layoutForWrap(buffer, metrics) else null
+        val rowCount = wrap?.rowCount ?: buffer.lineCount
+        maxY = EditorViewport.maxScrollY(rowCount, height.toFloat(), metrics.lineHeight)
+        val requested = EditorViewport.calculate(rowCount, height.toFloat(), metrics.lineHeight, x, y)
+        val logical = if (wrap != null && requested.lastVisibleLine >= requested.firstVisibleLine)
+            requested.copy(firstVisibleLine = wrap.lineAt(requested.firstVisibleLine),
+                lastVisibleLine = wrap.lineAt(requested.lastVisibleLine)) else requested
+        renderer.prepare(buffer, logical)
+        maxX = if (wrap == null) renderer.maxScrollX(width.toFloat(), metrics) else 0f
         offsetX = x.coerceIn(0f, maxX)
         offsetY = requested.scrollY
         viewport = requested.copy(scrollX = offsetX)
@@ -269,6 +362,7 @@ class StructaEditorView @JvmOverloads constructor(
             it.scrollX = offsetX
             it.scrollY = offsetY
         }
+        if (buffer.length > IncrementalHighlighter.MAX_TEXT_LENGTH) scheduleSyntax()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -285,10 +379,18 @@ class StructaEditorView @JvmOverloads constructor(
             }
             updateViewport()
             val metrics = renderer.metrics(editor.document.buffer.lineCount, style)
-            renderer.draw(canvas, editor, renderer.prepare(editor.document.buffer, viewport), viewport,
-                metrics, width.toFloat(), height.toFloat(), style,
-                cursorVisible && (!editable || !hasFocus() || blinkVisible), input?.composition,
-                syntaxSnapshot, decorations)
+            val wrap = if (wordWrapMode == WordWrapMode.VIEWPORT && width > 0)
+                layoutForWrap(editor.document.buffer, metrics) else null
+            val logical = if (wrap != null && viewport.lastVisibleLine >= viewport.firstVisibleLine)
+                viewport.copy(firstVisibleLine = wrap.lineAt(viewport.firstVisibleLine),
+                    lastVisibleLine = wrap.lineAt(viewport.lastVisibleLine)) else viewport
+            val lines = renderer.prepare(editor.document.buffer, logical)
+            val showCursor = cursorVisible && (!editable || !hasFocus() || blinkVisible)
+            if (wrap != null) renderer.drawWrapped(canvas, editor, lines, viewport, wrap, metrics,
+                width.toFloat(), height.toFloat(), style, showCursor, input?.composition,
+                syntaxSnapshot, decorations, largeSyntaxCache?.window)
+            else renderer.draw(canvas, editor, lines, viewport, metrics, width.toFloat(), height.toFloat(),
+                style, showCursor, input?.composition, syntaxSnapshot, decorations, largeSyntaxCache?.window)
         } finally {
             canvas.restoreToCount(saved)
         }
@@ -299,7 +401,7 @@ class StructaEditorView @JvmOverloads constructor(
         scroller.forceFinished(true)
         updateViewport()
         // In particular, keep the active insertion position above the newly opened IME.
-        if (editable && hasFocus() && h < oldh) revealCursor()
+        if (editable && hasFocus() && (h < oldh || (wordWrapMode == WordWrapMode.VIEWPORT && w != oldw))) revealCursor()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -356,6 +458,7 @@ class StructaEditorView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         syntaxScope?.cancel()
         syntaxScope = null
+        largeSyntaxCache?.requestedRange = null
         requestedSyntaxText = null
         syntaxGeneration++
         scroller.forceFinished(true)
@@ -427,9 +530,15 @@ class StructaEditorView @JvmOverloads constructor(
         val editor = engine ?: return 0
         val buffer = editor.document.buffer
         val metrics = renderer.metrics(buffer.lineCount, style)
-        val number = ((y + offsetY) / metrics.lineHeight).toInt().coerceIn(0, buffer.lineCount - 1)
+        val row = ((y + offsetY) / metrics.lineHeight).toInt()
+        val wrap = if (wordWrapMode == WordWrapMode.VIEWPORT && width > 0) layoutForWrap(buffer, metrics) else null
+        val number = wrap?.lineAt(row) ?: row.coerceIn(0, buffer.lineCount - 1)
         val line = EditorLine(number, buffer.getLineStart(number), buffer.getLine(number).toString())
-        val column = if (x < metrics.gutterWidth) 0f else (x + offsetX - metrics.gutterWidth - metrics.textPadding) / metrics.characterWidth
+        val start = wrap?.segmentStart(row.coerceIn(0, wrap.rowCount - 1), number) ?: 0
+        val column = if (x < metrics.gutterWidth) start.toFloat() else
+            start + (x + offsetX - metrics.gutterWidth - metrics.textPadding) / metrics.characterWidth
+        if (wrap != null) return line.startOffset + line.offsetAtColumn(column.coerceAtMost(
+            (start + wrap.columns).toFloat()))
         return line.startOffset + line.offsetAtColumn(column)
     }
 
@@ -440,12 +549,14 @@ class StructaEditorView @JvmOverloads constructor(
         val metrics = renderer.metrics(buffer.lineCount, style)
         val number = buffer.getLineForOffset(editor.cursor.offset.value)
         val line = EditorLine(number, buffer.getLineStart(number), buffer.getLine(number).toString())
-        val x = line.columnAt(editor.cursor.offset.value - line.startOffset) * metrics.characterWidth + metrics.textPadding
-        val y = number * metrics.lineHeight
+        val column = line.columnAt(editor.cursor.offset.value - line.startOffset)
+        val wrap = if (wordWrapMode == WordWrapMode.VIEWPORT) layoutForWrap(buffer, metrics) else null
+        val x = (column - (wrap?.let { column / it.columns * it.columns } ?: 0)) * metrics.characterWidth + metrics.textPadding
+        val y = (wrap?.rowFor(number, column) ?: number) * metrics.lineHeight
         val availableWidth = (width - metrics.gutterWidth - metrics.textPadding).coerceAtLeast(metrics.characterWidth)
         val targetX = if (x < offsetX) x else if (x + metrics.cursorWidth > offsetX + availableWidth) x + metrics.cursorWidth - availableWidth else offsetX
         val targetY = if (y < offsetY) y else if (y + metrics.lineHeight > offsetY + height) y + metrics.lineHeight - height else offsetY
-        scrollToPosition(targetX, targetY)
+        scrollToPosition(if (wrap == null) targetX else 0f, targetY)
     }
 
     private fun selectWord(x: Float, y: Float) {

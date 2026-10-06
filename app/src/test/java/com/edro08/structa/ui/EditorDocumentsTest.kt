@@ -22,7 +22,8 @@ class EditorDocumentsTest {
     private val dispatcher = StandardTestDispatcher()
     private val a = FileEntry(DocumentId("a"), "a.txt", 3, false)
     private val b = a.copy(id = DocumentId("b"), name = "b.txt")
-    private val disk = mutableMapOf(a.id to "one", b.id to "two")
+    private val c = a.copy(id = DocumentId("c"), name = "c.txt")
+    private val disk = mutableMapOf(a.id to "one", b.id to "two", c.id to "three")
     private var reads = 0
     private val reader = object : FileReader {
         override suspend fun read(file: FileEntry): String { reads++; return disk.getValue(file.id) }
@@ -159,6 +160,83 @@ class EditorDocumentsTest {
         assertFalse(model.state.value.dirty)
     }
 
+    @Test fun saveAllWritesOnlyDirtyTabsAndKeepsTheActiveTab() = runTest(dispatcher) {
+        val written = mutableListOf<DocumentId>()
+        val model = model(object : FileWriter {
+            override suspend fun write(destination: DocumentId, content: String) {
+                written += destination
+                disk[destination] = content
+            }
+        })
+        open(model, a)
+        model.edit(TextFieldValue("edited a"))
+        open(model, b)
+        open(model, c)
+        model.edit(TextFieldValue("edited c"))
+
+        model.saveAll(); runCurrent()
+        assertEquals(listOf(a.id, c.id), written)
+        assertEquals("edited a", disk[a.id])
+        assertEquals("two", disk[b.id])
+        assertEquals("edited c", disk[c.id])
+        assertEquals(c.id, model.state.value.entry?.id)
+        assertTrue(model.state.value.tabs.none { it.dirty })
+        model.undo()
+        assertEquals("three", model.state.value.value.text)
+        assertTrue(model.state.value.dirty)
+    }
+
+    @Test fun saveAllContinuesAfterFailureAndLeavesFailedTabDirty() = runTest(dispatcher) {
+        val model = model(object : FileWriter {
+            override suspend fun write(destination: DocumentId, content: String) {
+                if (destination == a.id) error("denied")
+                disk[destination] = content
+            }
+        })
+        open(model, a)
+        model.edit(TextFieldValue("unsaved a"))
+        open(model, b)
+        model.edit(TextFieldValue("saved b"))
+
+        model.saveAll(); runCurrent()
+        assertEquals("one", disk[a.id])
+        assertEquals("saved b", disk[b.id])
+        assertEquals(listOf(true, false), model.state.value.tabs.map { it.dirty })
+        assertTrue(model.state.value.message!!.contains("denied"))
+        assertFalse(model.state.value.saving)
+    }
+
+    @Test fun saveAllPreservesEditsMadeWhileWritingAndRejectsConcurrentSave() = runTest(dispatcher) {
+        val release = CompletableDeferred<Unit>()
+        val written = mutableListOf<DocumentId>()
+        val model = model(object : FileWriter {
+            override suspend fun write(destination: DocumentId, content: String) {
+                if (destination == a.id) release.await()
+                written += destination
+                disk[destination] = content
+            }
+        })
+        open(model, a)
+        model.edit(TextFieldValue("snapshot"))
+        open(model, b)
+        model.edit(TextFieldValue("edited b"))
+        model.saveAll(); runCurrent()
+        assertTrue(model.state.value.saving)
+        model.selectDocument(a.id)
+        model.edit(TextFieldValue("newer"))
+        model.saveAll()
+        model.requestClose(b.id)
+        assertEquals(2, model.state.value.tabs.size)
+
+        release.complete(Unit); runCurrent()
+        assertEquals(listOf(a.id, b.id), written)
+        assertEquals("snapshot", disk[a.id])
+        assertEquals("edited b", disk[b.id])
+        assertEquals(a.id, model.state.value.entry?.id)
+        assertEquals(listOf(true, false), model.state.value.tabs.map { it.dirty })
+        assertTrue(model.state.value.dirty)
+    }
+
     @Test fun saveFailureKeepsDirtyTabAndDiscardClosesOnlyRequestedDocument() = runTest(dispatcher) {
         val model = model(object : FileWriter {
             override suspend fun write(destination: DocumentId, content: String) { error("denied") }
@@ -193,5 +271,67 @@ class EditorDocumentsTest {
         assertEquals(a.id, model.state.value.entry?.id)
         assertEquals(a.id, model.state.value.pendingClose)
         assertTrue(model.state.value.dirty)
+    }
+
+    @Test fun closeOthersPromptsForEachDirtyTabAndKeepsSelectedDocument() = runTest(dispatcher) {
+        val model = model()
+        open(model, a)
+        model.edit(TextFieldValue("saved a"))
+        open(model, b)
+        model.edit(TextFieldValue("discarded b"))
+        open(model, c)
+
+        model.requestCloseOthers()
+        assertEquals(a.id, model.state.value.pendingClose)
+        model.saveAndClose(); runCurrent()
+        assertEquals(b.id, model.state.value.pendingClose)
+        model.discardAndClose()
+
+        assertNull(model.state.value.pendingClose)
+        assertEquals(listOf(c.id), model.state.value.tabs.map { it.documentId })
+        assertEquals(c.id, model.state.value.entry?.id)
+        assertEquals("saved a", disk[a.id])
+        assertEquals("two", disk[b.id])
+    }
+
+    @Test fun closeAllStopsOnCancelAndCanBeRestarted() = runTest(dispatcher) {
+        val model = model()
+        open(model, a)
+        open(model, b)
+        model.edit(TextFieldValue("unsaved b"))
+        open(model, c)
+
+        model.requestCloseAll()
+        assertEquals(listOf(b.id, c.id), model.state.value.tabs.map { it.documentId })
+        assertEquals(b.id, model.state.value.pendingClose)
+        model.cancelClose()
+        assertNull(model.state.value.pendingClose)
+        assertEquals(listOf(b.id, c.id), model.state.value.tabs.map { it.documentId })
+
+        model.requestCloseAll()
+        model.discardAndClose()
+        assertTrue(model.state.value.tabs.isEmpty())
+        assertNull(model.state.value.entry)
+        assertEquals("two", disk[b.id])
+    }
+
+    @Test fun failedSaveStopsCloseAllBeforeOtherDirtyDocuments() = runTest(dispatcher) {
+        val model = model(object : FileWriter {
+            override suspend fun write(destination: DocumentId, content: String) { error("denied") }
+        })
+        open(model, a)
+        model.edit(TextFieldValue("unsaved a"))
+        open(model, b)
+        model.edit(TextFieldValue("unsaved b"))
+        open(model, c)
+
+        model.requestCloseAll()
+        model.saveAndClose(); runCurrent()
+        assertEquals(a.id, model.state.value.pendingClose)
+        assertEquals(3, model.state.value.tabs.size)
+        model.discardAndClose()
+        assertEquals(listOf(b.id, c.id), model.state.value.tabs.map { it.documentId })
+        assertNull(model.state.value.pendingClose)
+        assertTrue(model.state.value.tabs.first().dirty)
     }
 }
