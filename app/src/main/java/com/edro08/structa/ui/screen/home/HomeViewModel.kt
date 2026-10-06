@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.edro08.structa.domain.document.DocumentId
 import com.edro08.structa.domain.filesystem.FileSystem
+import com.edro08.structa.domain.filesystem.FileRef
 import com.edro08.structa.domain.settings.SettingsRepository
 import com.edro08.structa.domain.workspace.WorkspaceHistoryRepository
 import com.edro08.structa.domain.workspace.WorkspaceShortcut
@@ -41,6 +42,9 @@ class HomeViewModel(private val settings: SettingsRepository, private val histor
             }
         }
     }
+
+    fun reference(id: DocumentId): FileRef = history.all().firstOrNull { it.id == id }
+        ?.let { FileRef(it.id, it.providerId) } ?: FileRef.of(id)
 
     fun toggleFavorite(id: DocumentId) {
         val entry = history.all().firstOrNull { it.id == id } ?: return

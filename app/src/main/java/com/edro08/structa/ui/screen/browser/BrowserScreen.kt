@@ -18,18 +18,25 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.edro08.structa.R
 import com.edro08.structa.domain.filesystem.FileEntry
+import com.edro08.structa.domain.filesystem.FileRef
+import com.edro08.structa.domain.filesystem.FileSystem
 import com.edro08.structa.ui.component.*
 import com.edro08.structa.ui.theme.ScreenStyle
 import com.edro08.structa.ui.theme.StructaSpacing
 import com.edro08.structa.ui.theme.StructaSizes
+
+enum class BrowserMode { EXPLORE, SELECT_DIRECTORY }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () -> Unit,
     onQuery: (String) -> Unit, onEntry: (FileEntry) -> Unit, onRetry: () -> Unit,
     onToggle: (FileEntry) -> Unit = {}, onCreate: (String, Boolean) -> Unit = { _, _ -> },
-    onRename: (FileEntry, String) -> Unit = { _, _ -> }, onDelete: (FileEntry) -> Unit = {}) {
-    var action by remember { mutableStateOf<BrowserAction?>(null) }
+    onRename: (FileEntry, String) -> Unit = { _, _ -> }, onDelete: (FileEntry) -> Unit = {},
+    mode: BrowserMode = BrowserMode.EXPLORE, fileSystem: FileSystem? = null,
+    root: FileRef? = state.workspace?.root, onBreadcrumb: (Int) -> Unit = {}, onSelectDirectory: () -> Unit = {}) {
+    val selecting = mode == BrowserMode.SELECT_DIRECTORY
+    var action by remember(mode, fileSystem, root) { mutableStateOf<BrowserAction?>(null) }
     var target by remember { mutableStateOf<FileEntry?>(null) }
     var name by remember { mutableStateOf("") }
     if (action != null) AlertDialog(onDismissRequest = { action = null },
@@ -55,22 +62,26 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
         })
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
-        topBar = { StructaTopBar(title = { Text(stringResource(R.string.browser_title)) }, onBack = onBack) }) { padding ->
+        topBar = { StructaTopBar(title = { Column {
+            Text(stringResource(if (selecting) R.string.browser_select_title else R.string.browser_title))
+            if (selecting) Text(stringResource(R.string.browser_direct_subtitle), style = MaterialTheme.typography.labelSmall)
+        } }, onBack = onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             WorkspacePanel(Modifier.fillMaxWidth().padding(horizontal = ScreenStyle.pagePadding), compact = true) {
                 Row(Modifier.horizontalScroll(rememberScrollState()).heightIn(min = 28.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onChooseFolder, enabled = !state.busy,
+                    TextButton(onClick = if (selecting) {{ onBreadcrumb(0) }} else onChooseFolder, enabled = !state.busy,
                         contentPadding = PaddingValues(horizontal = 6.dp)) {
                         Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(22.dp))
                         Spacer(Modifier.width(12.dp))
-                        Text(stringResource(R.string.browser_workspace))
+                        Text(stringResource(if (selecting) R.string.browser_internal_storage else R.string.browser_workspace))
                     }
-                    state.breadcrumbs.forEach { folder ->
+                    (if (selecting) state.breadcrumbs.drop(1) else state.breadcrumbs).forEachIndexed { index, folder ->
                         Icon(Icons.Filled.ChevronRight, contentDescription = null,
                             modifier = Modifier.size(StructaSizes.breadcrumbIcon),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(folder, Modifier.padding(horizontal = StructaSpacing.compact), maxLines = 1)
+                        if (selecting) TextButton(onClick = { onBreadcrumb(index + 1) }) { Text(folder, maxLines = 1) }
+                        else Text(folder, Modifier.padding(horizontal = StructaSpacing.compact), maxLines = 1)
                     }
                 }
             }
@@ -83,7 +94,7 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.browser_refresh))
                 }
                 if (state.stack.isNotEmpty()) {
-                    WorkspaceActionChip(stringResource(R.string.browser_new_file), Icons.AutoMirrored.Filled.NoteAdd,
+                    if (!selecting) WorkspaceActionChip(stringResource(R.string.browser_new_file), Icons.AutoMirrored.Filled.NoteAdd,
                         !state.busy) { name = ""; action = BrowserAction.NEW_FILE }
                     WorkspaceActionChip(stringResource(R.string.browser_new_folder), Icons.Filled.CreateNewFolder,
                         !state.busy) { name = ""; action = BrowserAction.NEW_FOLDER }
@@ -99,9 +110,9 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                     focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
                     unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent))
             Spacer(Modifier.height(7.dp))
-            when {
+            Box(Modifier.weight(1f).fillMaxWidth()) { when {
                 state.stack.isEmpty() -> EmptyScreen(stringResource(R.string.browser_no_folder)) {
-                    Button(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
+                    if (!selecting) Button(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
                 }
                 state.loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
                 state.error != null -> Column(Modifier.padding(StructaSpacing.section)) {
@@ -114,15 +125,15 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                             else stringResource(R.string.error_operation_failed_detail, state.error)
                     })
                     TextButton(onClick = onRetry) { Text(stringResource(R.string.browser_retry)) }
-                    TextButton(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
+                    if (!selecting) TextButton(onClick = onChooseFolder) { Text(stringResource(R.string.common_choose_folder)) }
                 }
-                state.entries.isEmpty() -> EmptyScreen(stringResource(R.string.browser_empty))
+                state.entries.none { !selecting || it.isDirectory } -> EmptyScreen(stringResource(R.string.browser_empty))
                 else -> {
                     val rows = buildList<Pair<FileEntry, Int>> {
                         fun addEntries(entries: List<FileEntry>, depth: Int) {
-                            entries.forEach { entry ->
+                            entries.filter { !selecting || it.isDirectory }.forEach { entry ->
                                 add(entry to depth)
-                                if (entry.id in state.expanded) addEntries(state.children[entry.id].orEmpty(), depth + 1)
+                                if (!selecting && entry.id in state.expanded) addEntries(state.children[entry.id].orEmpty(), depth + 1)
                             }
                         }
                         addEntries(state.entries, 0)
@@ -137,7 +148,7 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                                 detail = if (entry.isDirectory) state.children[entry.id]?.let {
                                 pluralStringResource(R.plurals.browser_folder_elements, it.size, it.size)
                             } else null) {
-                                Box {
+                                if (!selecting) Box {
                                     IconButton(onClick = { menu = true }, enabled = !state.busy,
                                         modifier = Modifier.size(38.dp)) {
                                         Icon(Icons.Filled.MoreVert,
@@ -165,6 +176,11 @@ fun BrowserScreen(state: BrowserUiState, onBack: () -> Unit, onChooseFolder: () 
                         }
                     }
                 }
+            } }
+            if (selecting) Button(onClick = onSelectDirectory,
+                enabled = state.stack.isNotEmpty() && !state.loading && state.error == null && !state.busy,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = ScreenStyle.pagePadding, vertical = 12.dp)) {
+                Text(stringResource(R.string.browser_use_folder))
             }
         }
     }

@@ -12,6 +12,7 @@ import com.edro08.structa.data.settings.AndroidSettingsRepository
 import com.edro08.structa.data.settings.AndroidWorkspaceHistoryRepository
 import com.edro08.structa.data.settings.AndroidSessionRepository
 import com.edro08.structa.data.filesystem.SafFileSystem
+import com.edro08.structa.data.filesystem.RoutedFileSystem
 import com.edro08.structa.ui.screen.browser.BrowserViewModel
 import com.edro08.structa.ui.screen.editor.EditorViewModel
 import com.edro08.structa.ui.screen.editor.QuickOpenViewModel
@@ -19,7 +20,7 @@ import com.edro08.structa.ui.screen.home.HomeViewModel
 import com.edro08.structa.ui.screen.settings.SettingsViewModel
 
 class AppContainer(context: Context) {
-    val fileSystem = SafFileSystem(context.applicationContext)
+    val fileSystem = RoutedFileSystem(SafFileSystem(context.applicationContext))
     val directoryReader = fileSystem
     val fileReader = fileSystem
     val fileWriter = fileSystem

@@ -10,11 +10,14 @@ data class SettingsUiState(val provider: String = "SAF", val darkTheme: Boolean 
     val editorFont: EditorFont = EditorFont.MONOSPACE, val editorFontSize: Int = 14)
 
 class SettingsViewModel(private val settings: SettingsRepository) : ViewModel() {
-    private val mutableState = MutableStateFlow(SettingsUiState(darkTheme = settings.darkTheme(),
+    private val mutableState = MutableStateFlow(SettingsUiState(provider = settings.fileAccessProvider(), darkTheme = settings.darkTheme(),
         editorFont = settings.editorFont(), editorFontSize = settings.editorFontSize()))
     val state = mutableState.asStateFlow()
-    // This selection is informational, not an active storage provider.
-    fun selectProvider(provider: String) { mutableState.value = mutableState.value.copy(provider = provider) }
+    fun selectProvider(provider: String) {
+        if (provider !in setOf("SAF", "DIRECT")) return
+        settings.setFileAccessProvider(provider)
+        mutableState.value = mutableState.value.copy(provider = provider)
+    }
     fun selectTheme(dark: Boolean) {
         settings.setDarkTheme(dark)
         mutableState.value = mutableState.value.copy(darkTheme = dark)

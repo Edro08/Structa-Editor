@@ -1,5 +1,20 @@
 # Contexto de trabajo — Structa
 
+Actualización 2026-10-06: proveedor Direct añadido para rutas absolutas de
+almacenamiento compartido junto a SAF. `RoutedFileSystem` despacha por identificador
+opaco; `FileRef` conserva identificador y clave del proveedor, y preferencias e
+historial persisten raíz y proveedor. `DirectFileSystem` ofrece metadata, listado,
+lectura/escritura, creación, renombrado, borrado y existencia en IO; bloquea
+`Android/data` y `Android/obb`. Configuración ofrece SAF, Acceso completo y
+Acceso privilegiado deshabilitado; permiso MANAGE_EXTERNAL_STORAGE mediante Ajustes.
+`BrowserScreen` tiene modos EXPLORE/SELECT_DIRECTORY, selector Direct propio con
+breadcrumb, refresh, nueva carpeta, filtro de carpetas y botón Usar esta carpeta,
+sin navegación inferior. El editor y Quick Open usan el filesystem enrutado.
+Validación: 167 JVM y 54 instrumentadas sin fallos; las 2 instrumentadas de
+acceso compartido no ejecutan operaciones si falta el permiso, pero ambas pasaron
+por separado con permiso concedido temporalmente en Pixel_6_Pro AVD. Se restauró
+el app-op MANAGE_EXTERNAL_STORAGE a `default` después. Sin commit.
+
 Actualización 2026-10-05: «Formatear» añade YAML conservador (sangría de mapas y
 secuencias de bloque inequívocos, sin reserializar; deja intactos escalares de
 bloque y casos ambiguos). Se habilita para JSON, YAML y XML según el lenguaje

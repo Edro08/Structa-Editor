@@ -45,6 +45,7 @@ class PresentationViewModelsTest {
         var dark = true
         var font = EditorFont.MONOSPACE
         var size = 14
+        var provider = "SAF"
         override fun lastFolder() = folder
         override fun setLastFolder(folder: DocumentId) { this.folder = folder }
         override fun darkTheme() = dark
@@ -53,6 +54,8 @@ class PresentationViewModelsTest {
         override fun setEditorFont(font: EditorFont) { this.font = font }
         override fun editorFontSize() = size
         override fun setEditorFontSize(size: Int) { this.size = size }
+        override fun fileAccessProvider() = provider
+        override fun setFileAccessProvider(provider: String) { this.provider = provider }
     }
     private val reader = object : FileReader {
         override suspend fun read(file: FileEntry) = "uno\ndos uno"
@@ -304,10 +307,10 @@ class PresentationViewModelsTest {
         assertFalse(model.state.value.loading)
     }
 
-    @Test fun shizukuSelectionIsOnlyPresentationState() {
+    @Test fun directSelectionPersistsWithoutChangingTheSelectedFolder() {
         val model = SettingsViewModel(settings)
-        model.selectProvider("Shizuku")
-        assertEquals("Shizuku", model.state.value.provider)
+        model.selectProvider("DIRECT")
+        assertEquals("DIRECT", SettingsViewModel(settings).state.value.provider)
         assertNull(settings.lastFolder())
     }
 

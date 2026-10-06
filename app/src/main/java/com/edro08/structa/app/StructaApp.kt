@@ -1,6 +1,9 @@
 package com.edro08.structa.app
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +31,8 @@ import com.edro08.structa.ui.theme.StructaTheme
 import com.edro08.structa.ui.theme.StructaSystemBars
 import kotlinx.coroutines.CancellationException
 import com.edro08.structa.data.filesystem.externalDocument
+import com.edro08.structa.data.filesystem.direct.DirectFileRef
+import com.edro08.structa.domain.filesystem.FileRef
 
 @Composable
 fun StructaApp(openIntent: Intent? = null, onOpenIntentHandled: (Intent) -> Unit = {}) {
@@ -35,16 +40,23 @@ fun StructaApp(openIntent: Intent? = null, onOpenIntentHandled: (Intent) -> Unit
     val container = remember { AppContainer(activity.applicationContext) }
     val home: HomeViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val browser: BrowserViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
+    val directPicker: BrowserViewModel = viewModel(key = "direct-directory-picker", viewModelStoreOwner = activity,
+        factory = container.factory)
     val editor: EditorViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val quickOpen: QuickOpenViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val settings: SettingsViewModel = viewModel(viewModelStoreOwner = activity, factory = container.factory)
     val homeState by home.state.collectAsStateWithLifecycle()
     val browserState by browser.state.collectAsStateWithLifecycle()
+    val pickerState by directPicker.state.collectAsStateWithLifecycle()
     val editorState by editor.state.collectAsStateWithLifecycle()
     val quickState by quickOpen.state.collectAsStateWithLifecycle()
     val settingsState by settings.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var platformMessage by rememberSaveable { mutableIntStateOf(0) }
+    var directAuthorized by remember { mutableStateOf(Environment.isExternalStorageManager()) }
+    var pendingDirectPicker by rememberSaveable { mutableStateOf(false) }
+    var pendingDirectWorkspace by rememberSaveable { mutableStateOf<String?>(null) }
+    var pickerReturnScreen by rememberSaveable { mutableStateOf(Screen.SETTINGS) }
     LaunchedEffect(openIntent) {
         if (openIntent != null) {
             try {
@@ -82,6 +94,7 @@ fun StructaApp(openIntent: Intent? = null, onOpenIntentHandled: (Intent) -> Unit
     DisposableEffect(activity, editor) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) editor.checkpointSession()
+            if (event == Lifecycle.Event.ON_RESUME) directAuthorized = Environment.isExternalStorageManager()
         }
         activity.lifecycle.addObserver(observer)
         onDispose { editor.checkpointSession(); activity.lifecycle.removeObserver(observer) }
@@ -107,31 +120,82 @@ fun StructaApp(openIntent: Intent? = null, onOpenIntentHandled: (Intent) -> Unit
     val saveAs = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         editor.completeSave(uri?.let { DocumentId(it.toString()) })
     }
+    fun openDirectPicker() {
+        pickerReturnScreen = screen
+        directPicker.selectFolder(DirectFileRef(Environment.getExternalStorageDirectory().absolutePath).ref, persist = false)
+        screen = Screen.SELECT_DIRECTORY
+    }
+    val allFilesPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        directAuthorized = Environment.isExternalStorageManager()
+        if (pendingDirectPicker && directAuthorized) openDirectPicker()
+        if (directAuthorized) pendingDirectWorkspace?.let { path ->
+            val id = DocumentId(path)
+            browser.selectFolder(home.reference(id))
+            home.opened(id)
+            screen = Screen.BROWSER
+        }
+        pendingDirectWorkspace = null
+        pendingDirectPicker = false
+    }
+    fun requestDirect(openPicker: Boolean) {
+        directAuthorized = Environment.isExternalStorageManager()
+        if (directAuthorized) {
+            if (openPicker) openDirectPicker()
+        } else {
+            pendingDirectPicker = openPicker
+            allFilesPermission.launch(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${activity.packageName}")))
+        }
+    }
+    fun chooseWorkspace() {
+        if (settingsState.provider == "DIRECT") requestDirect(true) else folderPicker.launch(null)
+    }
 
     StructaTheme(darkTheme = settingsState.darkTheme) {
         StructaSystemBars(activity, settingsState.darkTheme)
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Scaffold(bottomBar = {
-                if (screen != Screen.EDITOR) AppNavigation(screen) { screen = it }
+                if (screen != Screen.EDITOR && screen != Screen.SELECT_DIRECTORY) AppNavigation(screen) { screen = it }
             }) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                     when (screen) {
                          Screen.HOME -> HomeScreen(homeState, onOpenWorkspace = { id ->
-                             browser.selectFolder(id)
-                             home.opened(id)
-                             screen = Screen.BROWSER
-                         }, onChooseFolder = { folderPicker.launch(null) },
+                              if (home.reference(id).fileSystem == "direct" && !Environment.isExternalStorageManager()) {
+                                  pendingDirectWorkspace = id.value
+                                  requestDirect(false)
+                              } else {
+                                  browser.selectFolder(home.reference(id))
+                                  home.opened(id)
+                                  screen = Screen.BROWSER
+                              }
+                          }, onChooseFolder = ::chooseWorkspace,
                              onToggleFavorite = home::toggleFavorite, onRemoveFromHistory = home::remove)
                         Screen.BROWSER -> BrowserScreen(browserState,
                             onBack = { if (!browser.back()) screen = Screen.HOME },
-                            onChooseFolder = { folderPicker.launch(null) }, onQuery = browser::setQuery,
+                             onChooseFolder = ::chooseWorkspace, onQuery = browser::setQuery,
                             onEntry = { entry ->
                                 if (entry.isDirectory) browser.enter(entry) else {
                                     editor.open(entry)
                                     screen = Screen.EDITOR
                                 }
                              }, onRetry = browser::refresh, onToggle = browser::toggleFolder,
-                             onCreate = browser::create, onRename = browser::rename, onDelete = browser::delete)
+                              onCreate = browser::create, onRename = browser::rename, onDelete = browser::delete)
+                         Screen.SELECT_DIRECTORY -> BrowserScreen(pickerState,
+                             onBack = { if (!directPicker.back()) screen = pickerReturnScreen },
+                             onChooseFolder = {}, onQuery = directPicker::setQuery,
+                             onEntry = { if (it.isDirectory) directPicker.enter(it) },
+                             onRetry = directPicker::refresh, onCreate = directPicker::create,
+                             mode = BrowserMode.SELECT_DIRECTORY, fileSystem = container.fileSystem,
+                             root = pickerState.workspace?.root, onBreadcrumb = directPicker::navigateTo,
+                             onSelectDirectory = {
+                                 if (Environment.isExternalStorageManager() && !pickerState.loading && pickerState.error == null) {
+                                     pickerState.stack.lastOrNull()?.let { id ->
+                                         browser.selectFolder(FileRef(id, "direct"))
+                                         home.opened(id)
+                                         screen = Screen.BROWSER
+                                     }
+                                 } else { directAuthorized = false; screen = Screen.SETTINGS }
+                             })
                         Screen.EDITOR -> EditorScreen(editorState, onBack = { screen = Screen.BROWSER },
                              editorFont = settingsState.editorFont, editorFontSize = settingsState.editorFontSize,
                              onExplore = { screen = Screen.BROWSER }, onLanguage = editor::setLanguage,
@@ -156,9 +220,13 @@ fun StructaApp(openIntent: Intent? = null, onOpenIntentHandled: (Intent) -> Unit
                                     }
                                 }
                             })
-                        Screen.SETTINGS -> SettingsScreen(settingsState, onBack = { screen = Screen.HOME },
-                            onProvider = settings::selectProvider, onTheme = settings::selectTheme,
-                            onFont = settings::selectFont, onFontSize = settings::selectFontSize)
+                         Screen.SETTINGS -> SettingsScreen(settingsState, onBack = { screen = Screen.HOME },
+                             onProvider = { provider ->
+                                 settings.selectProvider(provider)
+                                 if (provider == "DIRECT") requestDirect(true)
+                             }, onTheme = settings::selectTheme,
+                             onFont = settings::selectFont, onFontSize = settings::selectFontSize,
+                             directAuthorized = directAuthorized, onManagePermission = { requestDirect(false) })
                     }
                     editorState.message?.let { MessageOverlay(it, editor::dismissMessage) }
                      if (quickState.visible) ProductivityPicker(stringResource(R.string.editor_open), quickState.query, quickOpen::setQuery,

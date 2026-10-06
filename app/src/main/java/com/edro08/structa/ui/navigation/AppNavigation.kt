@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.edro08.structa.R
 import com.edro08.structa.ui.theme.ScreenStyle
 
-enum class Screen { HOME, BROWSER, EDITOR, SETTINGS }
+enum class Screen { HOME, BROWSER, EDITOR, SETTINGS, SELECT_DIRECTORY }
 
 @Composable
 fun AppNavigation(currentScreen: Screen, onScreenSelected: (Screen) -> Unit) {
@@ -26,12 +26,13 @@ fun AppNavigation(currentScreen: Screen, onScreenSelected: (Screen) -> Unit) {
         listOf(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.colorScheme.surfaceContainerHigh)))
         .navigationBarsPadding().height(ScreenStyle.navigationHeight),
         verticalAlignment = Alignment.CenterVertically) {
-        Screen.entries.forEach { screen ->
+        listOf(Screen.HOME, Screen.BROWSER, Screen.EDITOR, Screen.SETTINGS).forEach { screen ->
             val (icon, label) = when (screen) {
                 Screen.HOME -> Icons.Default.Home to R.string.nav_home
                 Screen.BROWSER -> Icons.Default.Folder to R.string.nav_browser
                 Screen.EDITOR -> Icons.Default.Code to R.string.nav_editor
                 Screen.SETTINGS -> Icons.Default.Settings to R.string.nav_settings
+                Screen.SELECT_DIRECTORY -> error("El selector no forma parte de la navegación inferior")
             }
             val selected = currentScreen == screen
             TextButton(onClick = { onScreenSelected(screen) }, modifier = Modifier.weight(1f),

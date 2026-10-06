@@ -25,7 +25,8 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(state: SettingsUiState, onBack: () -> Unit, onProvider: (String) -> Unit,
-    onTheme: (Boolean) -> Unit, onFont: (EditorFont) -> Unit, onFontSize: (Int) -> Unit) {
+    onTheme: (Boolean) -> Unit, onFont: (EditorFont) -> Unit, onFontSize: (Int) -> Unit,
+    directAuthorized: Boolean = false, onManagePermission: () -> Unit = {}) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = { StructaTopBar(title = { Text(stringResource(R.string.settings_title)) }, onBack = onBack) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(
@@ -68,10 +69,22 @@ fun SettingsScreen(state: SettingsUiState, onBack: () -> Unit, onProvider: (Stri
                     WorkspaceSelection(stringResource(R.string.settings_provider_saf), state.provider == "SAF") {
                         onProvider("SAF")
                     }
-                    WorkspaceSelection(stringResource(R.string.settings_provider_shizuku), state.provider == "Shizuku") {
-                        onProvider("Shizuku")
+                    Text(stringResource(R.string.settings_saf_description), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    WorkspaceSelection(stringResource(R.string.settings_provider_direct), state.provider == "DIRECT") {
+                        onProvider("DIRECT")
                     }
-                    if (state.provider == "Shizuku") Text(stringResource(R.string.settings_shizuku_unavailable),
+                    Text(stringResource(R.string.settings_direct_description), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(if (directAuthorized) R.string.settings_direct_active else R.string.settings_direct_inactive),
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onManagePermission) {
+                        Text(stringResource(if (directAuthorized) R.string.settings_direct_manage else R.string.settings_direct_grant))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    WorkspaceSelection(stringResource(R.string.settings_provider_privileged), false, enabled = false) {}
+                    Text(stringResource(R.string.settings_privileged_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

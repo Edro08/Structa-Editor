@@ -29,12 +29,12 @@ class SettingsScreenTest {
         compose.onNodeWithText("Sans monoespaciada").performClick()
         compose.onNode(SemanticsMatcher("slider") { it.config.contains(SemanticsActions.SetProgress) })
             .performSemanticsAction(SemanticsActions.SetProgress) { it(20f) }
-        compose.onNodeWithText("Shizuku").performClick()
+        compose.onNodeWithText("Acceso completo").performScrollTo().performClick()
         compose.runOnIdle {
             assertEquals(false, dark)
             assertEquals(EditorFont.SANS_MONOSPACE, font)
             assertEquals(20, size)
-            assertEquals("Shizuku", provider)
+            assertEquals("DIRECT", provider)
         }
     }
 }

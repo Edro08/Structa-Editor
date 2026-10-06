@@ -69,11 +69,11 @@ fun WorkspaceActionChip(text: String, icon: ImageVector, enabled: Boolean = true
 }
 
 @Composable
-fun WorkspaceSelection(label: String, selected: Boolean, onClick: () -> Unit) {
+fun WorkspaceSelection(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(43.dp), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected = selected, onClick = onClick, modifier = Modifier.size(40.dp),
+        RadioButton(selected = selected, onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp),
             colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary))
-        TextButton(onClick = onClick, modifier = Modifier.weight(1f),
+        TextButton(onClick = onClick, enabled = enabled, modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(start = 10.dp),
             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
             Text(label, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium)

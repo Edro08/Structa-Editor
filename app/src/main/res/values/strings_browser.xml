@@ -1,5 +1,9 @@
 <resources>
     <string name="browser_title">Explorador</string>
+    <string name="browser_select_title">Seleccionar carpeta</string>
+    <string name="browser_direct_subtitle">Acceso completo</string>
+    <string name="browser_internal_storage">Almacenamiento interno</string>
+    <string name="browser_use_folder">Usar esta carpeta</string>
     <string name="browser_workspace">Workspace</string>
     <string name="browser_refresh">Actualizar</string>
     <string name="browser_new_file">Nuevo archivo</string>

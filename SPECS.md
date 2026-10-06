@@ -2694,3 +2694,22 @@ features avanzadas
 ```
 
 No sacrificar el núcleo por intentar implementar rápidamente características visuales.
+
+---
+
+## Implementación posterior — almacenamiento compartido Direct (2026-10-06)
+
+- SAF sigue disponible. `DirectFileSystem` usa rutas absolutas para archivos y
+  carpetas del almacenamiento compartido; el enrutador de proveedores conserva
+  los contratos de lectura, escritura y navegación usados por el editor.
+- La raíz y su proveedor (`saf` / `direct`) se conservan en preferencias e
+  historial de workspaces. El selector Direct usa el propio Explorador en modo
+  `SELECT_DIRECTORY` y el permiso `MANAGE_EXTERNAL_STORAGE`; SAF conserva el
+  selector `ACTION_OPEN_DOCUMENT_TREE`.
+- Direct bloquea `Android/data` y `Android/obb`. El proveedor privilegiado queda
+  pendiente; su entrada de Configuración se muestra deshabilitada. El enrutador
+  admite registrar proveedores adicionales con identificadores opacos propios.
+- Comprobados 167 tests JVM y 54 instrumentados sin fallos. Las dos pruebas de
+  almacenamiento Direct compartido se ejecutaron además con permiso concedido
+  sobre el emulador: lectura/escritura en Download y flujo completo Configuración
+  → selector → workspace. Después se restauró el permiso del emulador.

@@ -47,17 +47,20 @@ class BrowserViewModel(
     private var treeGeneration = 0L
     private val expanding = mutableSetOf<DocumentId>()
 
-    init { settings.lastFolder()?.let { selectFolder(it, persist = false) } }
+    init { settings.lastFolderRef()?.let { selectFolder(it, persist = false) } }
 
-    fun selectFolder(id: DocumentId, persist: Boolean = true) {
-        if (persist) settings.setLastFolder(id)
+    fun selectFolder(id: DocumentId, persist: Boolean = true) = selectFolder(FileRef.of(id), persist)
+
+    fun selectFolder(root: FileRef, persist: Boolean = true) {
+        val id = root.id
+        if (persist) settings.setLastFolderRef(root)
         titles = listOf("")
         rootName = null
         val selected = ++rootSelection
         treeGeneration++
         expanding.clear()
         mutableState.value = BrowserUiState(stack = listOf(id), workspace = Workspace(id.value,
-            FileRef(id, fileSystem?.key ?: "saf"), state.value.workspace?.openDocuments.orEmpty()))
+            root, state.value.workspace?.openDocuments.orEmpty()))
         load()
         fileSystem?.let { fs ->
             viewModelScope.launch {
@@ -88,6 +91,14 @@ class BrowserViewModel(
             breadcrumbs = listOfNotNull(rootName) + titles.drop(1))
         load()
         return true
+    }
+
+    fun navigateTo(index: Int) {
+        if (index !in state.value.stack.indices || index == state.value.stack.lastIndex) return
+        titles = titles.take(index + 1)
+        mutableState.value = state.value.copy(stack = state.value.stack.take(index + 1), title = titles.last(),
+            breadcrumbs = listOfNotNull(rootName) + titles.drop(1))
+        load()
     }
 
     fun setQuery(query: String) {
