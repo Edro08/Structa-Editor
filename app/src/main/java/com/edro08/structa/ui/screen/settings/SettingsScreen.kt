@@ -82,11 +82,6 @@ fun SettingsScreen(state: SettingsUiState, onBack: () -> Unit, onProvider: (Stri
                     TextButton(onClick = onManagePermission) {
                         Text(stringResource(if (directAuthorized) R.string.settings_direct_manage else R.string.settings_direct_grant))
                     }
-                    Spacer(Modifier.height(8.dp))
-                    WorkspaceSelection(stringResource(R.string.settings_provider_privileged), false, enabled = false) {}
-                    Text(stringResource(R.string.settings_privileged_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

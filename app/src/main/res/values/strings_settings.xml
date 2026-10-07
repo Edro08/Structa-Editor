@@ -16,8 +16,6 @@
     <string name="settings_saf_description">Acceso estándar de Android.</string>
     <string name="settings_provider_direct">Acceso completo</string>
     <string name="settings_direct_description">Rutas directas del almacenamiento compartido.</string>
-    <string name="settings_provider_privileged">Acceso privilegiado</string>
-    <string name="settings_privileged_description">Rutas restringidas como Android/data y Android/obb. Próximamente.</string>
     <string name="settings_direct_inactive">Estado: No autorizado</string>
     <string name="settings_direct_active">Estado: Activo</string>
     <string name="settings_direct_grant">Conceder acceso</string>

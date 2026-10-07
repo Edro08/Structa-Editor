@@ -20,7 +20,7 @@ class DirectFileSystem : FileSystem {
         val parts = resolved.path.split(File.separatorChar)
         if (parts.windowed(2).any { it[0].equals("Android", true) &&
                 (it[1].equals("data", true) || it[1].equals("obb", true)) })
-            throw IOException("Esta ruta requiere acceso privilegiado")
+            throw IOException("Android/data y Android/obb no están disponibles con Acceso completo")
         return resolved
     }
 
