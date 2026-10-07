@@ -1,0 +1,8 @@
+<resources>
+    <string name="error_folder_read_failed">No se pudo leer la carpeta: %1$s</string>
+    <string name="error_folder_read_failed_generic">No se pudo leer la carpeta.</string>
+    <string name="error_operation_failed">Operación fallida</string>
+    <string name="error_operation_failed_detail">Operación fallida: %1$s</string>
+    <string name="error_open_documents">Cierra las pestañas afectadas antes de modificar archivos; para carpetas, cierra todas las pestañas.</string>
+    <string name="error_temporary_folder_access">El proveedor solo permite acceso temporal a esta carpeta.</string>
+</resources>

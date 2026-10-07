@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver android:name="com.edro08.structa.ui.editor.GrantTestDocumentsReceiver"
+            android:exported="true" />
+        <provider
+            android:name="com.edro08.structa.ui.editor.TestDocumentsProvider"
+            android:authorities="com.edro08.structa.test.documents"
+            android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:exported="true"
+            android:grantUriPermissions="true">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <provider android:name="com.edro08.structa.ui.editor.TestSharedFileProvider"
+            android:authorities="com.edro08.structa.test.shared"
+            android:exported="true" android:grantUriPermissions="true" />
+    </application>
+</manifest>

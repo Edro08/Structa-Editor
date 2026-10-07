@@ -1,0 +1,16 @@
+<resources>
+    <string name="common_back">Atrás</string>
+    <string name="common_close">Cerrar</string>
+    <string name="common_cancel">Cancelar</string>
+    <string name="common_confirm">Aceptar</string>
+    <string name="common_choose_folder">Elegir carpeta</string>
+    <string name="common_folder">Carpeta</string>
+    <string name="common_file_badge">TXT</string>
+    <string name="common_folder_badge">DIR</string>
+    <string name="common_size_bytes">%1$d B</string>
+    <string name="common_size_kilobytes">%1$d KB</string>
+    <string name="common_size_megabytes">%1$d MB</string>
+    <string name="common_home_tagline">Archivos sin depender de su extensión</string>
+    <string name="common_home_description">Abre y edita texto, JSON o YAML desde cualquier carpeta autorizada.</string>
+    <string name="common_open_last_folder">Abrir última carpeta</string>
+</resources>

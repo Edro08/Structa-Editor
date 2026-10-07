@@ -1,0 +1,31 @@
+<resources>
+    <string name="browser_title">Explorador</string>
+    <string name="browser_select_title">Seleccionar carpeta</string>
+    <string name="browser_direct_subtitle">Acceso completo</string>
+    <string name="browser_internal_storage">Almacenamiento interno</string>
+    <string name="browser_use_folder">Usar esta carpeta</string>
+    <string name="browser_workspace">Workspace</string>
+    <string name="browser_refresh">Actualizar</string>
+    <string name="browser_new_file">Nuevo archivo</string>
+    <string name="browser_new_folder">Nueva carpeta</string>
+    <string name="browser_search_hint">Buscar por nombre</string>
+    <string name="browser_no_folder">No hay una carpeta autorizada disponible.</string>
+    <string name="browser_empty">No hay archivos o carpetas que mostrar.</string>
+    <string name="browser_retry">Reintentar</string>
+    <string name="browser_actions_visible">Acciones visibles</string>
+    <string name="browser_actions_hidden">Acciones ocultas</string>
+    <string name="browser_actions_named">Acciones de %1$s</string>
+    <plurals name="browser_folder_elements">
+        <item quantity="one">Carpeta · %d elemento</item>
+        <item quantity="other">Carpeta · %d elementos</item>
+    </plurals>
+    <string name="browser_open_named">Abrir %1$s</string>
+    <string name="browser_expand_named">Expandir %1$s</string>
+    <string name="browser_collapse_named">Contraer %1$s</string>
+    <string name="browser_rename_named">Renombrar %1$s</string>
+    <string name="browser_delete_named">Eliminar %1$s</string>
+    <string name="browser_name">Nombre</string>
+    <string name="browser_rename">Renombrar</string>
+    <string name="browser_delete">Eliminar</string>
+    <string name="dialog_browser_delete_confirm">¿Eliminar %1$s? Esta operación no se puede deshacer.</string>
+</resources>

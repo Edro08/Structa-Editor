@@ -1,0 +1,23 @@
+<resources>
+    <string name="settings_title">Configuración</string>
+    <string name="settings_theme">Tema</string>
+    <string name="settings_theme_description">Apariencia general de la aplicación.</string>
+    <string name="settings_dark">Oscuro</string>
+    <string name="settings_light">Claro</string>
+    <string name="settings_editor">Editor</string>
+    <string name="settings_editor_description">Personaliza la apariencia del editor de texto.</string>
+    <string name="settings_font">Tipo de letra</string>
+    <string name="settings_font_monospace">Monoespaciada</string>
+    <string name="settings_font_sans_monospace">Sans monoespaciada</string>
+    <string name="settings_font_size">Tamaño de letra: %1$d sp</string>
+    <string name="settings_file_access">Acceso a archivos</string>
+    <string name="settings_file_access_description">Selecciona cómo acceder al almacenamiento del dispositivo.</string>
+    <string name="settings_provider_saf">SAF</string>
+    <string name="settings_saf_description">Acceso estándar de Android.</string>
+    <string name="settings_provider_direct">Acceso completo</string>
+    <string name="settings_direct_description">Rutas directas del almacenamiento compartido.</string>
+    <string name="settings_direct_inactive">Estado: No autorizado</string>
+    <string name="settings_direct_active">Estado: Activo</string>
+    <string name="settings_direct_grant">Conceder acceso</string>
+    <string name="settings_direct_manage">Administrar permiso</string>
+</resources>

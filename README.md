@@ -1,1 +1,1 @@
-# Structa
+# Structa Editor
